@@ -2,9 +2,18 @@ import { Router } from "express";
 import { nanoid } from "nanoid";
 import { db, recordAudit } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { applySuspensionCascade, licenceIsUsable, upgradeEligibility, type EspRow } from "../lib/lifecycle.js";
+import { applySuspensionCascade, licenceIsUsable, upgradeEligibility, type EspRow, type LifecycleRules } from "../lib/lifecycle.js";
 import { runDocumentScreening } from "../lib/aiScreening.js";
-import { runScoring, type Criterion, type IntegratedData, type LifecycleRules, type TierThresholds } from "../lib/scoring.js";
+import {
+  runClassification,
+  evaluateHazardousModule,
+  type Criterion,
+  type CriterionEntry,
+  type ClassificationParameters,
+  type Gates,
+  type HazardousModuleItem,
+  type Tier,
+} from "../lib/scoring.js";
 
 export const applicationsRouter = Router();
 applicationsRouter.use(requireAuth);
@@ -13,14 +22,27 @@ function getEsp(espId: string): EspRow {
   return db.prepare("SELECT * FROM esps WHERE id = ?").get(espId) as EspRow;
 }
 
+type AppRow = {
+  id: string;
+  esp_id: string;
+  g1_critical_violation: "Y" | "N" | null;
+  g2_suspension_12mo: "Y" | "N" | null;
+  g3_holds_hazardous_permit: "Y" | "N" | null;
+};
+
+function getApplication(id: string): AppRow | undefined {
+  return db.prepare("SELECT * FROM applications WHERE id = ?").get(id) as AppRow | undefined;
+}
+
 function getPublishedConfig() {
   const row = db.prepare("SELECT * FROM config_versions WHERE status = 'published' ORDER BY version_number DESC LIMIT 1").get() as
     | {
         id: string;
         version_number: number;
         criteria_json: string;
+        hazardous_module_json: string;
+        classification_parameters_json: string;
         lifecycle_rules_json: string;
-        tier_thresholds_json: string;
       }
     | undefined;
   if (!row) return null;
@@ -28,23 +50,33 @@ function getPublishedConfig() {
     id: row.id,
     version_number: row.version_number,
     criteria: JSON.parse(row.criteria_json) as Criterion[],
+    hazardousModule: JSON.parse(row.hazardous_module_json) as Record<string, HazardousModuleItem[]>,
+    parameters: JSON.parse(row.classification_parameters_json) as ClassificationParameters,
     lifecycleRules: JSON.parse(row.lifecycle_rules_json) as LifecycleRules,
-    tierThresholds: JSON.parse(row.tier_thresholds_json) as TierThresholds,
   };
 }
 
-function getIntegratedData(espId: string): IntegratedData {
-  const bolisaty = db
-    .prepare("SELECT payload_json FROM integrated_data_snapshots WHERE esp_id = ? AND source = 'bolisaty' ORDER BY captured_at DESC LIMIT 1")
-    .get(espId) as { payload_json: string } | undefined;
-  const iwms = db
-    .prepare("SELECT payload_json FROM integrated_data_snapshots WHERE esp_id = ? AND source = 'iwms' ORDER BY captured_at DESC LIMIT 1")
-    .get(espId) as { payload_json: string } | undefined;
-  // Compliance/violations sample: MVP assumes zero open violations unless seeded otherwise.
+function getCriterionEntries(applicationId: string): Map<string, CriterionEntry> {
+  const rows = db.prepare("SELECT * FROM criterion_entries WHERE application_id = ?").all(applicationId) as Array<{
+    criterion_id: string;
+    applicable: "Y" | "N/A";
+    value: number | null;
+    evidence_verified: "Y" | "N" | null;
+  }>;
+  const map = new Map<string, CriterionEntry>();
+  for (const r of rows) {
+    map.set(r.criterion_id, { criterionId: r.criterion_id, applicable: r.applicable, value: r.value, evidenceVerified: r.evidence_verified });
+  }
+  return map;
+}
+
+function getGates(app: AppRow, esp: EspRow): Gates {
+  const licence = licenceIsUsable(esp);
   return {
-    bolisaty: bolisaty ? JSON.parse(bolisaty.payload_json) : {},
-    iwms: iwms ? JSON.parse(iwms.payload_json) : {},
-    compliance: { open_violations: 0 },
+    g0: licence.ok ? "Y" : "N",
+    g1: app.g1_critical_violation ?? "N",
+    g2: app.g2_suspension_12mo ?? "N",
+    g3: app.g3_holds_hazardous_permit ?? "N",
   };
 }
 
@@ -62,7 +94,7 @@ applicationsRouter.get("/", (req, res) => {
 });
 
 applicationsRouter.get("/:id", (req, res) => {
-  const app = db.prepare("SELECT * FROM applications WHERE id = ?").get(req.params.id) as { esp_id: string } | undefined;
+  const app = getApplication(req.params.id);
   if (!app) return res.status(404).json({ error: "Application not found" });
 
   applySuspensionCascade(app.esp_id);
@@ -78,13 +110,28 @@ applicationsRouter.get("/:id", (req, res) => {
   const decisions = db.prepare("SELECT * FROM decisions WHERE application_id = ? ORDER BY decided_at DESC").all(req.params.id);
   const config = getPublishedConfig();
 
+  const sectorCriteria = config ? config.criteria.filter((c) => c.sector === esp.sector) : [];
+  const entries = getCriterionEntries(req.params.id);
+  const criteriaWithEntries = sectorCriteria.map((c) => ({ ...c, entry: entries.get(c.id) ?? null }));
+
+  const hazardousItems = config ? config.hazardousModule[esp.sector] ?? [] : [];
+  const hazEntryRows = db.prepare("SELECT requirement_id, met FROM hazardous_module_entries WHERE application_id = ?").all(req.params.id) as Array<{
+    requirement_id: string;
+    met: "Y" | "N";
+  }>;
+  const hazMap = new Map(hazEntryRows.map((r) => [r.requirement_id, r.met]));
+  const hazardousWithEntries = hazardousItems.map((h) => ({ ...h, met: hazMap.get(h.id) ?? null }));
+
   res.json({
     application: app,
     esp,
     documents,
+    gates: getGates(app, esp),
+    criteria: criteriaWithEntries,
+    hazardous_module: hazardousWithEntries,
     eligibility_runs: eligibilityRuns.map((r: any) => ({ ...r, reasons: JSON.parse(r.reasons_json) })),
     ai_screening_runs: aiScreeningRuns.map((r: any) => ({ ...r, findings: JSON.parse(r.findings_json) })),
-    score_runs: scoreRuns.map((r: any) => ({ ...r, breakdown: JSON.parse(r.criteria_breakdown_json) })),
+    score_runs: scoreRuns.map((r: any) => ({ ...r, result: JSON.parse(r.result_json) })),
     decisions,
     upgrade_eligibility: config ? upgradeEligibility(esp, config.lifecycleRules) : null,
   });
@@ -113,8 +160,116 @@ applicationsRouter.post("/:id/documents/:docId/expiry", requireRole("reviewer", 
   res.json({ ok: true });
 });
 
+// Gates G1-G3 (ESP INFORMATION & GATES block). G0 is derived from licence status, not stored.
+applicationsRouter.put("/:id/gates", requireRole("reviewer", "admin"), (req, res) => {
+  const app = getApplication(req.params.id);
+  if (!app) return res.status(404).json({ error: "Application not found" });
+
+  const { g1, g2, g3 } = req.body ?? {};
+  for (const [key, val] of [["g1", g1], ["g2", g2], ["g3", g3]] as const) {
+    if (val !== undefined && !["Y", "N"].includes(val)) {
+      return res.status(400).json({ error: `${key} must be 'Y' or 'N'` });
+    }
+  }
+
+  db.prepare(
+    `UPDATE applications SET g1_critical_violation = COALESCE(?, g1_critical_violation), g2_suspension_12mo = COALESCE(?, g2_suspension_12mo), g3_holds_hazardous_permit = COALESCE(?, g3_holds_hazardous_permit) WHERE id = ?`
+  ).run(g1 ?? null, g2 ?? null, g3 ?? null, req.params.id);
+
+  recordAudit({
+    actorId: req.user!.id,
+    actorUsername: req.user!.username,
+    actorRole: req.user!.role,
+    action: "application.gates_set",
+    entityType: "application",
+    entityId: req.params.id,
+    after: { g1, g2, g3 },
+  });
+
+  res.json({ ok: true });
+});
+
+// Upserts one criterion's Applicable / Measured value / Evidence verified entry.
+applicationsRouter.put("/:id/criteria/:criterionId", requireRole("reviewer", "admin"), (req, res) => {
+  const app = getApplication(req.params.id);
+  if (!app) return res.status(404).json({ error: "Application not found" });
+
+  const { applicable, value, evidenceVerified } = req.body ?? {};
+  if (!["Y", "N/A"].includes(applicable)) return res.status(400).json({ error: "applicable must be 'Y' or 'N/A'" });
+  if (value !== null && typeof value !== "number") return res.status(400).json({ error: "value must be a number or null" });
+  if (evidenceVerified !== null && !["Y", "N"].includes(evidenceVerified)) {
+    return res.status(400).json({ error: "evidenceVerified must be 'Y', 'N' or null" });
+  }
+
+  const existing = db
+    .prepare("SELECT id FROM criterion_entries WHERE application_id = ? AND criterion_id = ?")
+    .get(req.params.id, req.params.criterionId) as { id: string } | undefined;
+
+  if (existing) {
+    db.prepare(
+      `UPDATE criterion_entries SET applicable = ?, value = ?, evidence_verified = ?, updated_at = datetime('now'), updated_by = ? WHERE id = ?`
+    ).run(applicable, value, evidenceVerified, req.user!.username, existing.id);
+  } else {
+    db.prepare(
+      `INSERT INTO criterion_entries (id, application_id, criterion_id, applicable, value, evidence_verified, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(nanoid(), req.params.id, req.params.criterionId, applicable, value, evidenceVerified, req.user!.username);
+  }
+
+  recordAudit({
+    actorId: req.user!.id,
+    actorUsername: req.user!.username,
+    actorRole: req.user!.role,
+    action: "criterion_entry.set",
+    entityType: "application",
+    entityId: req.params.id,
+    after: { criterionId: req.params.criterionId, applicable, value, evidenceVerified },
+  });
+
+  res.json({ ok: true });
+});
+
+// Upserts one Hazardous Waste Module requirement's Met (Y/N) answer.
+applicationsRouter.put("/:id/hazardous-module/:requirementId", requireRole("reviewer", "admin"), (req, res) => {
+  const app = getApplication(req.params.id);
+  if (!app) return res.status(404).json({ error: "Application not found" });
+  if (app.g3_holds_hazardous_permit !== "Y") {
+    return res.status(409).json({ error: "Hazardous Waste Module only applies when gate G3 is set to Y" });
+  }
+
+  const { met } = req.body ?? {};
+  if (!["Y", "N"].includes(met)) return res.status(400).json({ error: "met must be 'Y' or 'N'" });
+
+  const existing = db
+    .prepare("SELECT id FROM hazardous_module_entries WHERE application_id = ? AND requirement_id = ?")
+    .get(req.params.id, req.params.requirementId) as { id: string } | undefined;
+
+  if (existing) {
+    db.prepare(`UPDATE hazardous_module_entries SET met = ?, updated_at = datetime('now'), updated_by = ? WHERE id = ?`).run(
+      met,
+      req.user!.username,
+      existing.id
+    );
+  } else {
+    db.prepare(
+      `INSERT INTO hazardous_module_entries (id, application_id, requirement_id, met, updated_by) VALUES (?, ?, ?, ?, ?)`
+    ).run(nanoid(), req.params.id, req.params.requirementId, met, req.user!.username);
+  }
+
+  recordAudit({
+    actorId: req.user!.id,
+    actorUsername: req.user!.username,
+    actorRole: req.user!.role,
+    action: "hazardous_module_entry.set",
+    entityType: "application",
+    entityId: req.params.id,
+    after: { requirementId: req.params.requirementId, met },
+  });
+
+  res.json({ ok: true });
+});
+
 applicationsRouter.post("/:id/eligibility/run", requireRole("reviewer", "admin"), (req, res) => {
-  const app = db.prepare("SELECT * FROM applications WHERE id = ?").get(req.params.id) as { esp_id: string } | undefined;
+  const app = getApplication(req.params.id);
   if (!app) return res.status(404).json({ error: "Application not found" });
 
   applySuspensionCascade(app.esp_id);
@@ -122,7 +277,7 @@ applicationsRouter.post("/:id/eligibility/run", requireRole("reviewer", "admin")
   const licence = licenceIsUsable(esp);
 
   const reasons: string[] = [];
-  if (!licence.ok) reasons.push(licence.reason!);
+  if (!licence.ok) reasons.push(`Gate G0 (valid EAD permit AND active account) not met: ${licence.reason}`);
 
   const passed = reasons.length === 0;
   const id = nanoid();
@@ -146,7 +301,7 @@ applicationsRouter.post("/:id/eligibility/run", requireRole("reviewer", "admin")
 });
 
 applicationsRouter.post("/:id/ai-screening/run", requireRole("reviewer", "admin"), (req, res) => {
-  const app = db.prepare("SELECT * FROM applications WHERE id = ?").get(req.params.id) as { esp_id: string } | undefined;
+  const app = getApplication(req.params.id);
   if (!app) return res.status(404).json({ error: "Application not found" });
   const esp = getEsp(app.esp_id);
   const docs = db.prepare("SELECT doc_type, expiry_date, status FROM documents WHERE application_id = ?").all(req.params.id) as any[];
@@ -174,27 +329,45 @@ applicationsRouter.post("/:id/ai-screening/run", requireRole("reviewer", "admin"
 });
 
 applicationsRouter.post("/:id/score/run", requireRole("reviewer", "admin"), (req, res) => {
-  const app = db.prepare("SELECT * FROM applications WHERE id = ?").get(req.params.id) as { esp_id: string } | undefined;
+  const app = getApplication(req.params.id);
   if (!app) return res.status(404).json({ error: "Application not found" });
 
   applySuspensionCascade(app.esp_id);
   const esp = getEsp(app.esp_id);
-  const licence = licenceIsUsable(esp);
-  if (!licence.ok) {
-    return res.status(409).json({ error: `Cannot score: ${licence.reason}` });
-  }
 
   const config = getPublishedConfig();
   if (!config) return res.status(500).json({ error: "No published ConfigVersion is available" });
 
-  const data = getIntegratedData(app.esp_id);
-  const result = runScoring(config.criteria, config.tierThresholds, esp.sector, data);
+  const sectorCriteria = config.criteria.filter((c) => c.sector === esp.sector);
+  const entries = getCriterionEntries(req.params.id);
+  const gates = getGates(app, esp);
+
+  const hazardousItems = config.hazardousModule[esp.sector] ?? [];
+  const hazEntryRows = db.prepare("SELECT requirement_id, met FROM hazardous_module_entries WHERE application_id = ?").all(req.params.id) as Array<{
+    requirement_id: string;
+    met: "Y" | "N";
+  }>;
+  const hazAnswers = new Map(hazEntryRows.map((r) => [r.requirement_id, r.met]));
+  const hazardousModuleResult = evaluateHazardousModule(gates, hazardousItems, hazAnswers);
+
+  const previousPublishedTier: Tier | "None" = (esp.previous_published_tier as Tier | null) ?? "None";
+
+  const result = runClassification(sectorCriteria, entries, config.parameters, gates, previousPublishedTier, hazardousModuleResult);
 
   const id = nanoid();
   db.prepare(
-    `INSERT INTO score_runs (id, application_id, config_version_id, criteria_breakdown_json, raw_score, tier, integrated_data_snapshot_json, executed_by)
+    `INSERT INTO score_runs (id, application_id, config_version_id, result_json, total_score, final_classification, context_snapshot_json, executed_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, req.params.id, config.id, JSON.stringify(result.breakdown), result.raw_score, result.tier, JSON.stringify(data), req.user!.username);
+  ).run(
+    id,
+    req.params.id,
+    config.id,
+    JSON.stringify(result),
+    result.total,
+    result.finalClassification,
+    JSON.stringify({ gates, previousPublishedTier, hazardousModuleResult }),
+    req.user!.username
+  );
 
   db.prepare("UPDATE applications SET status = 'scoring' WHERE id = ?").run(req.params.id);
 
@@ -205,7 +378,7 @@ applicationsRouter.post("/:id/score/run", requireRole("reviewer", "admin"), (req
     action: "score.run",
     entityType: "application",
     entityId: req.params.id,
-    after: { score_run_id: id, config_version: config.version_number, raw_score: result.raw_score, tier: result.tier },
+    after: { score_run_id: id, config_version: config.version_number, total: result.total, final_classification: result.finalClassification },
   });
 
   res.json({ id, config_version: config.version_number, ...result });
@@ -213,7 +386,9 @@ applicationsRouter.post("/:id/score/run", requireRole("reviewer", "admin"), (req
 
 applicationsRouter.post("/:id/score/:scoreRunId/override", requireRole("reviewer"), (req, res) => {
   const { tier, justification } = req.body ?? {};
-  if (!["A", "B", "C", "D"].includes(tier)) return res.status(400).json({ error: "tier must be one of A, B, C, D" });
+  if (!["Basic", "Advanced", "Premium"].includes(tier)) {
+    return res.status(400).json({ error: "tier must be one of Basic, Advanced, Premium" });
+  }
   if (typeof justification !== "string" || justification.trim().length < 10) {
     return res.status(400).json({ error: "A written justification (10+ characters) is required to override a score" });
   }
@@ -242,8 +417,11 @@ applicationsRouter.post("/:id/score/:scoreRunId/override", requireRole("reviewer
 applicationsRouter.post("/:id/decision", requireRole("reviewer"), (req, res) => {
   const { decision, tier, note } = req.body ?? {};
   if (!["approved", "rejected"].includes(decision)) return res.status(400).json({ error: "decision must be 'approved' or 'rejected'" });
+  if (decision === "approved" && tier && !["Basic", "Advanced", "Premium"].includes(tier)) {
+    return res.status(400).json({ error: "tier must be one of Basic, Advanced, Premium" });
+  }
 
-  const app = db.prepare("SELECT * FROM applications WHERE id = ?").get(req.params.id) as { esp_id: string } | undefined;
+  const app = getApplication(req.params.id);
   if (!app) return res.status(404).json({ error: "Application not found" });
 
   const id = nanoid();
@@ -259,8 +437,8 @@ applicationsRouter.post("/:id/decision", requireRole("reviewer"), (req, res) => 
     const validUntil = new Date();
     validUntil.setMonth(validUntil.getMonth() + validityMonths);
     db.prepare(
-      `UPDATE esps SET current_tier = ?, last_classification_at = datetime('now'), classification_valid_until = ? WHERE id = ?`
-    ).run(tier, validUntil.toISOString().slice(0, 10), app.esp_id);
+      `UPDATE esps SET current_tier = ?, previous_published_tier = ?, last_classification_at = datetime('now'), classification_valid_until = ? WHERE id = ?`
+    ).run(tier, tier, validUntil.toISOString().slice(0, 10), app.esp_id);
   }
 
   recordAudit({
@@ -299,7 +477,7 @@ applicationsRouter.post("/:id/push-to-tamm", requireRole("reviewer", "admin"), (
 });
 
 applicationsRouter.post("/:id/upgrade-request", requireRole("reviewer"), (req, res) => {
-  const app = db.prepare("SELECT * FROM applications WHERE id = ?").get(req.params.id) as { esp_id: string } | undefined;
+  const app = getApplication(req.params.id);
   if (!app) return res.status(404).json({ error: "Application not found" });
 
   applySuspensionCascade(app.esp_id);

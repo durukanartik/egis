@@ -1,13 +1,25 @@
-// Configuration Governance Flow (Section 8.3): Draft -> Simulate -> Submit for approval ->
-// Approve (separate approver from editor) -> Publish new ConfigVersion. Historical ScoreRuns keep
-// their original ConfigVersion for audit reproducibility; this router never mutates a published
-// or superseded version.
+// Configuration Governance Flow (Section 8.3 of the System Architecture Document): Draft -> Simulate
+// -> Submit for approval -> Approve (separate approver from editor) -> Publish new ConfigVersion.
+// Historical ScoreRuns keep their original ConfigVersion for audit reproducibility; this router
+// never mutates a published or superseded version. Criteria, category minimums, tier thresholds,
+// the retention buffer and gate caps are reproduced from the EAD ESP Classification & Rating
+// Calculator (R02, 30 Sept 2026) — see apps/api/src/data/classification.json.
 
 import { Router } from "express";
 import { nanoid } from "nanoid";
 import { db, recordAudit } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { runScoring, type Criterion, type IntegratedData, type TierThresholds } from "../lib/scoring.js";
+import {
+  runClassification,
+  evaluateHazardousModule,
+  type Criterion,
+  type CriterionEntry,
+  type ClassificationParameters,
+  type Gates,
+  type HazardousModuleItem,
+  type Tier,
+} from "../lib/scoring.js";
+import { licenceIsUsable, type EspRow } from "../lib/lifecycle.js";
 
 export const configRouter = Router();
 configRouter.use(requireAuth);
@@ -18,8 +30,9 @@ function rowToConfig(row: any) {
     version_number: row.version_number,
     status: row.status,
     criteria: JSON.parse(row.criteria_json),
+    hazardous_module: JSON.parse(row.hazardous_module_json),
+    classification_parameters: JSON.parse(row.classification_parameters_json),
     lifecycle_rules: JSON.parse(row.lifecycle_rules_json),
-    tier_thresholds: JSON.parse(row.tier_thresholds_json),
     notes: row.notes,
     created_by: row.created_by,
     created_at: row.created_at,
@@ -50,17 +63,26 @@ configRouter.get("/versions/:id", (req, res) => {
 });
 
 configRouter.post("/versions", requireRole("admin"), (req, res) => {
-  const { criteria, lifecycle_rules, tier_thresholds, notes } = req.body ?? {};
-  if (!Array.isArray(criteria) || !lifecycle_rules || !tier_thresholds) {
-    return res.status(400).json({ error: "criteria[], lifecycle_rules and tier_thresholds are required" });
+  const { criteria, hazardous_module, classification_parameters, lifecycle_rules, notes } = req.body ?? {};
+  if (!Array.isArray(criteria) || !hazardous_module || !classification_parameters || !lifecycle_rules) {
+    return res.status(400).json({ error: "criteria[], hazardous_module, classification_parameters and lifecycle_rules are required" });
   }
 
   const maxVersion = (db.prepare("SELECT MAX(version_number) as m FROM config_versions").get() as { m: number | null }).m ?? 0;
   const id = nanoid();
   db.prepare(
-    `INSERT INTO config_versions (id, version_number, status, criteria_json, lifecycle_rules_json, tier_thresholds_json, notes, created_by)
-     VALUES (?, ?, 'draft', ?, ?, ?, ?, ?)`
-  ).run(id, maxVersion + 1, JSON.stringify(criteria), JSON.stringify(lifecycle_rules), JSON.stringify(tier_thresholds), notes ?? null, req.user!.username);
+    `INSERT INTO config_versions (id, version_number, status, criteria_json, hazardous_module_json, classification_parameters_json, lifecycle_rules_json, notes, created_by)
+     VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    maxVersion + 1,
+    JSON.stringify(criteria),
+    JSON.stringify(hazardous_module),
+    JSON.stringify(classification_parameters),
+    JSON.stringify(lifecycle_rules),
+    notes ?? null,
+    req.user!.username
+  );
 
   recordAudit({
     actorId: req.user!.id,
@@ -80,14 +102,16 @@ configRouter.put("/versions/:id", requireRole("admin"), (req, res) => {
   if (!before) return res.status(404).json({ error: "Not found" });
   if (before.status !== "draft") return res.status(409).json({ error: "Only draft ConfigVersions can be edited" });
 
-  const { criteria, lifecycle_rules, tier_thresholds, notes } = req.body ?? {};
+  const { criteria, hazardous_module, classification_parameters, lifecycle_rules, notes } = req.body ?? {};
   db.prepare(
-    `UPDATE config_versions SET criteria_json = COALESCE(?, criteria_json), lifecycle_rules_json = COALESCE(?, lifecycle_rules_json),
-     tier_thresholds_json = COALESCE(?, tier_thresholds_json), notes = COALESCE(?, notes) WHERE id = ?`
+    `UPDATE config_versions SET criteria_json = COALESCE(?, criteria_json), hazardous_module_json = COALESCE(?, hazardous_module_json),
+     classification_parameters_json = COALESCE(?, classification_parameters_json), lifecycle_rules_json = COALESCE(?, lifecycle_rules_json),
+     notes = COALESCE(?, notes) WHERE id = ?`
   ).run(
     criteria ? JSON.stringify(criteria) : null,
+    hazardous_module ? JSON.stringify(hazardous_module) : null,
+    classification_parameters ? JSON.stringify(classification_parameters) : null,
     lifecycle_rules ? JSON.stringify(lifecycle_rules) : null,
-    tier_thresholds ? JSON.stringify(tier_thresholds) : null,
     notes ?? null,
     req.params.id
   );
@@ -105,44 +129,72 @@ configRouter.put("/versions/:id", requireRole("admin"), (req, res) => {
   res.json({ ok: true });
 });
 
-// Dry-run: scores a sample of real applications' ESPs against this draft/pending version and compares
-// to the currently published version, without writing any ScoreRun or mutating application state.
+function loadEntries(applicationId: string): Map<string, CriterionEntry> {
+  const rows = db.prepare("SELECT * FROM criterion_entries WHERE application_id = ?").all(applicationId) as Array<{
+    criterion_id: string;
+    applicable: "Y" | "N/A";
+    value: number | null;
+    evidence_verified: "Y" | "N" | null;
+  }>;
+  const map = new Map<string, CriterionEntry>();
+  for (const r of rows) map.set(r.criterion_id, { criterionId: r.criterion_id, applicable: r.applicable, value: r.value, evidenceVerified: r.evidence_verified });
+  return map;
+}
+
+// Dry-run: scores every ESP with at least one submitted application against this draft/pending
+// version and compares to the currently published version, without writing any ScoreRun.
 configRouter.post("/versions/:id/simulate", requireRole("admin"), (req, res) => {
-  const candidate = db.prepare("SELECT * FROM config_versions WHERE id = ?").get(req.params.id) as any;
-  if (!candidate) return res.status(404).json({ error: "Not found" });
+  const candidateRow = db.prepare("SELECT * FROM config_versions WHERE id = ?").get(req.params.id) as any;
+  if (!candidateRow) return res.status(404).json({ error: "Not found" });
 
-  const published = db.prepare("SELECT * FROM config_versions WHERE status = 'published' ORDER BY version_number DESC LIMIT 1").get() as any;
+  const publishedRow = db.prepare("SELECT * FROM config_versions WHERE status = 'published' ORDER BY version_number DESC LIMIT 1").get() as any;
 
-  const sampleEsps = db.prepare("SELECT * FROM esps LIMIT 8").all() as any[];
-  const candidateCriteria: Criterion[] = JSON.parse(candidate.criteria_json);
-  const candidateThresholds: TierThresholds = JSON.parse(candidate.tier_thresholds_json);
-  const publishedCriteria: Criterion[] | null = published ? JSON.parse(published.criteria_json) : null;
-  const publishedThresholds: TierThresholds | null = published ? JSON.parse(published.tier_thresholds_json) : null;
+  const candidateCriteria: Criterion[] = JSON.parse(candidateRow.criteria_json);
+  const candidateHaz: Record<string, HazardousModuleItem[]> = JSON.parse(candidateRow.hazardous_module_json);
+  const candidateParams: ClassificationParameters = JSON.parse(candidateRow.classification_parameters_json);
 
-  const results = sampleEsps.map((esp) => {
-    const bolisaty = db
-      .prepare("SELECT payload_json FROM integrated_data_snapshots WHERE esp_id = ? AND source = 'bolisaty' ORDER BY captured_at DESC LIMIT 1")
-      .get(esp.id) as { payload_json: string } | undefined;
-    const iwms = db
-      .prepare("SELECT payload_json FROM integrated_data_snapshots WHERE esp_id = ? AND source = 'iwms' ORDER BY captured_at DESC LIMIT 1")
-      .get(esp.id) as { payload_json: string } | undefined;
-    const data: IntegratedData = {
-      bolisaty: bolisaty ? JSON.parse(bolisaty.payload_json) : {},
-      iwms: iwms ? JSON.parse(iwms.payload_json) : {},
-      compliance: { open_violations: 0 },
+  const publishedCriteria: Criterion[] | null = publishedRow ? JSON.parse(publishedRow.criteria_json) : null;
+  const publishedHaz: Record<string, HazardousModuleItem[]> | null = publishedRow ? JSON.parse(publishedRow.hazardous_module_json) : null;
+  const publishedParams: ClassificationParameters | null = publishedRow ? JSON.parse(publishedRow.classification_parameters_json) : null;
+
+  const sampleApps = db
+    .prepare(
+      `SELECT a.id as application_id, e.* FROM applications a JOIN esps e ON e.id = a.esp_id
+       GROUP BY e.id ORDER BY a.submitted_at DESC LIMIT 12`
+    )
+    .all() as Array<EspRow & { id: string; application_id: string; sector: string }>;
+
+  const results = sampleApps.map((esp) => {
+    const entries = loadEntries(esp.application_id);
+    const gates: Gates = {
+      g0: licenceIsUsable(esp).ok ? "Y" : "N",
+      g1: "N",
+      g2: "N",
+      g3: "N",
     };
+    const previousTier: Tier | "None" = (esp.previous_published_tier as Tier | null) ?? "None";
 
-    const candidateResult = runScoring(candidateCriteria, candidateThresholds, esp.sector, data);
-    const publishedResult =
-      publishedCriteria && publishedThresholds ? runScoring(publishedCriteria, publishedThresholds, esp.sector, data) : null;
+    const candidateSectorCriteria = candidateCriteria.filter((c) => c.sector === esp.sector);
+    const candidateHazItems = candidateHaz[esp.sector] ?? [];
+    const candidateHazResult = evaluateHazardousModule(gates, candidateHazItems, new Map());
+    const candidateResult = runClassification(candidateSectorCriteria, entries, candidateParams, gates, previousTier, candidateHazResult);
+
+    let publishedSummary: { total: number; tier: string } | null = null;
+    if (publishedCriteria && publishedHaz && publishedParams) {
+      const publishedSectorCriteria = publishedCriteria.filter((c) => c.sector === esp.sector);
+      const publishedHazItems = publishedHaz[esp.sector] ?? [];
+      const publishedHazResult = evaluateHazardousModule(gates, publishedHazItems, new Map());
+      const publishedResult = runClassification(publishedSectorCriteria, entries, publishedParams, gates, previousTier, publishedHazResult);
+      publishedSummary = { total: publishedResult.total, tier: publishedResult.finalClassification };
+    }
 
     return {
       esp_id: esp.id,
       esp_name: esp.legal_name,
       sector: esp.sector,
-      candidate: { raw_score: candidateResult.raw_score, tier: candidateResult.tier },
-      published: publishedResult ? { raw_score: publishedResult.raw_score, tier: publishedResult.tier } : null,
-      tier_changed: publishedResult ? publishedResult.tier !== candidateResult.tier : null,
+      candidate: { total: candidateResult.total, tier: candidateResult.finalClassification },
+      published: publishedSummary,
+      tier_changed: publishedSummary ? publishedSummary.tier !== candidateResult.finalClassification : null,
     };
   });
 

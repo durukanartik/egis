@@ -3,7 +3,15 @@
 // and the 30-day post-decision review window.
 
 import { db, recordAudit } from "../db.js";
-import type { LifecycleRules } from "./scoring.js";
+
+export type LifecycleRules = {
+  licence_status_gating: boolean;
+  suspension_cascade: boolean;
+  classification_validity_months: number;
+  upgrade_cycle_months: number;
+  review_window_days: number;
+  gps_scope: string;
+};
 
 export type EspRow = {
   id: string;
@@ -13,6 +21,7 @@ export type EspRow = {
   licence_expiry_date: string;
   classification_valid_until: string | null;
   current_tier: string | null;
+  previous_published_tier: string | null;
   last_classification_at: string | null;
   last_upgrade_request_at: string | null;
 };

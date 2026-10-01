@@ -38,8 +38,9 @@ export default function ConfigVersions() {
         method: "POST",
         body: JSON.stringify({
           criteria: full.version.criteria,
+          hazardous_module: full.version.hazardous_module,
+          classification_parameters: full.version.classification_parameters,
           lifecycle_rules: full.version.lifecycle_rules,
-          tier_thresholds: full.version.tier_thresholds,
           notes: `Draft branched from v${published.version_number} by ${user?.username}`,
         }),
       });

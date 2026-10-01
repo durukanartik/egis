@@ -9,9 +9,7 @@ export type DocRow = {
 
 const REQUIRED_DOCS_BY_SECTOR: Record<string, string[]> = {
   Transportation: ["Vehicle Registration Schedule", "Insurance Certificate", "Waste Carrier Permit"],
-  Collection: ["Vehicle Registration Schedule", "Insurance Certificate", "Waste Carrier Permit"],
   Treatment: ["Facility Operating Permit", "Environmental Compliance Certificate", "Insurance Certificate"],
-  Recycling: ["Facility Operating Permit", "Environmental Compliance Certificate", "Insurance Certificate"],
   Trading: ["Trade Licence Copy", "Insurance Certificate"],
 };
 

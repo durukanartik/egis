@@ -37,7 +37,7 @@ export default function Dashboard() {
 
       <div className="grid md:grid-cols-2 gap-6">
         <ChartCard title="Applications by status" rows={data.by_status.map((r) => ({ label: r.status.replace(/_/g, " "), value: r.count }))} />
-        <ChartCard title="ESPs by current tier" rows={data.by_tier.map((r) => ({ label: `Tier ${r.tier}`, value: r.count }))} />
+        <ChartCard title="ESPs by current tier" rows={data.by_tier.map((r) => ({ label: r.tier, value: r.count }))} />
         <ChartCard title="ESPs by sector" rows={data.by_sector.map((r) => ({ label: r.sector, value: r.count }))} />
         <ChartCard
           title="ESPs by licence status"

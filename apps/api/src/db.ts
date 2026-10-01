@@ -24,28 +24,23 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Sector is one of the three ESP Classification & Rating Calculator matrices (R02, 30 Sept 2026):
+-- Transportation, Trading, Treatment (the latter covers Treatment & Recycling together).
 CREATE TABLE IF NOT EXISTS esps (
   id TEXT PRIMARY KEY,
   legal_name TEXT NOT NULL,
   commercial_licence_number TEXT NOT NULL,
   waste_licence_number TEXT NOT NULL,
-  sector TEXT NOT NULL CHECK (sector IN ('Collection','Transportation','Trading','Treatment','Recycling')),
+  sector TEXT NOT NULL CHECK (sector IN ('Transportation','Trading','Treatment')),
   permitted_waste_types TEXT NOT NULL,
   licence_status TEXT NOT NULL CHECK (licence_status IN ('active','suspended','expired','revoked')),
   licence_issue_date TEXT NOT NULL,
   licence_expiry_date TEXT NOT NULL,
   last_classification_at TEXT,
   classification_valid_until TEXT,
-  current_tier TEXT,
+  current_tier TEXT CHECK (current_tier IN ('Basic','Advanced','Premium')),
+  previous_published_tier TEXT CHECK (previous_published_tier IN ('Basic','Advanced','Premium')),
   last_upgrade_request_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS integrated_data_snapshots (
-  id TEXT PRIMARY KEY,
-  esp_id TEXT NOT NULL REFERENCES esps(id),
-  source TEXT NOT NULL CHECK (source IN ('bolisaty','iwms')),
-  captured_at TEXT NOT NULL,
-  payload_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS applications (
@@ -56,7 +51,11 @@ CREATE TABLE IF NOT EXISTS applications (
   status TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted','under_review','eligibility_failed','scoring','decided','voided')),
   declaration_accepted INTEGER NOT NULL DEFAULT 1,
   submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
-  tamm_reference TEXT NOT NULL
+  tamm_reference TEXT NOT NULL,
+  -- Gates G1-G3 (Parameters sheet / ESP INFORMATION & GATES block). G0 is computed from licence_status.
+  g1_critical_violation TEXT CHECK (g1_critical_violation IN ('Y','N')),
+  g2_suspension_12mo TEXT CHECK (g2_suspension_12mo IN ('Y','N')),
+  g3_holds_hazardous_permit TEXT CHECK (g3_holds_hazardous_permit IN ('Y','N'))
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -69,13 +68,40 @@ CREATE TABLE IF NOT EXISTS documents (
   status TEXT NOT NULL DEFAULT 'uploaded' CHECK (status IN ('uploaded','expired','missing'))
 );
 
+-- One row per (application, criterion): the reviewer's entered measured value and evidence
+-- verification, mirroring the calculator's "Applicable / Measured value / Evidence verified" input
+-- columns (I/J/K in each sector sheet).
+CREATE TABLE IF NOT EXISTS criterion_entries (
+  id TEXT PRIMARY KEY,
+  application_id TEXT NOT NULL REFERENCES applications(id),
+  criterion_id TEXT NOT NULL,
+  applicable TEXT NOT NULL DEFAULT 'Y' CHECK (applicable IN ('Y','N/A')),
+  value REAL,
+  evidence_verified TEXT CHECK (evidence_verified IN ('Y','N')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by TEXT NOT NULL,
+  UNIQUE (application_id, criterion_id)
+);
+
+-- Hazardous Waste Module pass/fail answers (H-1..H-5), completed only when G3 = Y.
+CREATE TABLE IF NOT EXISTS hazardous_module_entries (
+  id TEXT PRIMARY KEY,
+  application_id TEXT NOT NULL REFERENCES applications(id),
+  requirement_id TEXT NOT NULL,
+  met TEXT NOT NULL CHECK (met IN ('Y','N')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by TEXT NOT NULL,
+  UNIQUE (application_id, requirement_id)
+);
+
 CREATE TABLE IF NOT EXISTS config_versions (
   id TEXT PRIMARY KEY,
   version_number INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','pending_approval','approved','published','superseded','rejected')),
   criteria_json TEXT NOT NULL,
+  hazardous_module_json TEXT NOT NULL,
+  classification_parameters_json TEXT NOT NULL,
   lifecycle_rules_json TEXT NOT NULL,
-  tier_thresholds_json TEXT NOT NULL,
   notes TEXT,
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -108,10 +134,10 @@ CREATE TABLE IF NOT EXISTS score_runs (
   id TEXT PRIMARY KEY,
   application_id TEXT NOT NULL REFERENCES applications(id),
   config_version_id TEXT NOT NULL REFERENCES config_versions(id),
-  criteria_breakdown_json TEXT NOT NULL,
-  raw_score REAL NOT NULL,
-  tier TEXT NOT NULL,
-  integrated_data_snapshot_json TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  total_score REAL NOT NULL,
+  final_classification TEXT NOT NULL,
+  context_snapshot_json TEXT NOT NULL,
   executed_at TEXT NOT NULL DEFAULT (datetime('now')),
   executed_by TEXT NOT NULL,
   overridden INTEGER NOT NULL DEFAULT 0,
@@ -173,6 +199,46 @@ export function recordAudit(entry: {
   );
 }
 
+type RawClassification = {
+  sectors: Record<
+    string,
+    {
+      criteria: Array<Record<string, unknown>>;
+      hazardousModule: Array<{ id: string; requirement: string; verification: string; exampleMet: string | null }>;
+      example: {
+        espName: string;
+        g0: string;
+        g1: string;
+        g2: string;
+        g3: string;
+        hazardousResult: string;
+        currentPublishedTier: string;
+        total: number;
+        finalClassification: string;
+      };
+    }
+  >;
+  parameters: {
+    advancedMinTotal: number;
+    premiumMinTotal: number;
+    retentionBufferPoints: number;
+    gateCapG1: string;
+    gateCapG2: string;
+    gateCapG3: string;
+    categoryMinimums: Record<string, { advanced: number; premium: number }>;
+  };
+};
+
+const classificationDataPath = path.join(__dirname, "data", "classification.json");
+export const classificationData: RawClassification = JSON.parse(fs.readFileSync(classificationDataPath, "utf-8"));
+
+function stripExampleFields(criteria: Array<Record<string, unknown>>) {
+  return criteria.map((c) => {
+    const { exampleApplicable, exampleValue, exampleEvidenceVerified, exampleScore, ...rest } = c;
+    return rest;
+  });
+}
+
 function seed() {
   const userCount = (db.prepare("SELECT COUNT(*) as c FROM users").get() as { c: number }).c;
   if (userCount > 0) return;
@@ -188,13 +254,55 @@ function seed() {
   insertUser.run(nanoid(), "admin2", hash("Password123!"), "admin", "Sara Al Nuaimi (Config Approver)");
   insertUser.run(nanoid(), "auditor1", hash("Password123!"), "auditor", "Khalid Al Zaabi (Auditor)");
 
+  // ---- Published ConfigVersion v1, seeded from the EAD ESP Classification & Rating Calculator (R02) ----
+  const allCriteria = Object.values(classificationData.sectors).flatMap((s) => stripExampleFields(s.criteria));
+  const hazardousModule = Object.fromEntries(
+    Object.entries(classificationData.sectors).map(([sector, s]) => [
+      sector,
+      s.hazardousModule.map(({ id, requirement, verification }) => ({ id, requirement, verification })),
+    ])
+  );
+  const classificationParameters = classificationData.parameters;
+  const lifecycleRules = {
+    licence_status_gating: true,
+    suspension_cascade: true,
+    classification_validity_months: 12,
+    upgrade_cycle_months: 6,
+    review_window_days: 30,
+    gps_scope: "equipped_active_status_only",
+  };
+
+  const cfgId = nanoid();
+  db.prepare(
+    `INSERT INTO config_versions (id, version_number, status, criteria_json, hazardous_module_json, classification_parameters_json, lifecycle_rules_json, notes, created_by, submitted_by, submitted_at, approved_by, approved_at, approval_note, published_at)
+     VALUES (?, 1, 'published', ?, ?, ?, ?, ?, 'system-seed', 'system-seed', datetime('now'), 'system-seed', datetime('now'), 'Initial baseline ConfigVersion seeded from the EAD ESP Classification & Rating Calculator (R02, 30 Sept 2026).', datetime('now'))`
+  ).run(
+    cfgId,
+    JSON.stringify(allCriteria),
+    JSON.stringify(hazardousModule),
+    JSON.stringify(classificationParameters),
+    JSON.stringify(lifecycleRules),
+    "Criteria, category minimums, tier thresholds, retention buffer and gate caps reproduced exactly from the EAD-issued ESP Classification & Rating Calculator (Output 3, R02)."
+  );
+
+  recordAudit({
+    actorUsername: "system-seed",
+    actorRole: "admin",
+    action: "config_version.publish",
+    entityType: "config_version",
+    entityId: cfgId,
+    after: { version_number: 1, status: "published" },
+  });
+
+  // ---- Seed ESPs + applications ----
   type EspSeed = {
     name: string;
-    sector: "Collection" | "Transportation" | "Trading" | "Treatment" | "Recycling";
+    sector: "Transportation" | "Trading" | "Treatment";
     waste: string;
     licenceStatus: "active" | "suspended" | "expired" | "revoked";
-    bolisaty: Record<string, unknown>;
-    iwms: Record<string, unknown>;
+    useExample: boolean; // pre-fill every criterion entry from the calculator's own illustrative example
+    gates: { g1: "Y" | "N"; g2: "Y" | "N"; g3: "Y" | "N" };
+    previousPublishedTier: "Basic" | "Advanced" | "Premium" | null;
   };
 
   const esps: EspSeed[] = [
@@ -203,194 +311,71 @@ function seed() {
       sector: "Transportation",
       waste: "General, Construction & Demolition",
       licenceStatus: "active",
-      bolisaty: {
-        vehicle_count: 42,
-        compliant_vehicles: 40,
-        vehicle_types: ["Compactor", "Flatbed"],
-        avg_vehicle_age_years: 3.2,
-        fuel_types: ["Diesel", "CNG"],
-        euro_emission_standard: null,
-        vehicle_inspection_history: null,
-        gps_equipped_active: true,
-        active_contracts: 18,
-        complaints: null,
-        customer_rating: null,
-        illegal_dumping_cases: null,
-      },
-      iwms: {
-        employee_count: 96,
-        emiratisation_pct: null,
-        icv_score: null,
-      },
-    },
-    {
-      name: "Capital Clean Transport Services",
-      sector: "Transportation",
-      waste: "Hazardous, General",
-      licenceStatus: "active",
-      bolisaty: {
-        vehicle_count: 25,
-        compliant_vehicles: 18,
-        vehicle_types: ["Tanker", "Compactor"],
-        avg_vehicle_age_years: 6.8,
-        fuel_types: ["Diesel"],
-        euro_emission_standard: null,
-        vehicle_inspection_history: null,
-        gps_equipped_active: true,
-        active_contracts: 9,
-        complaints: null,
-        customer_rating: null,
-        illegal_dumping_cases: null,
-      },
-      iwms: {
-        employee_count: 54,
-        emiratisation_pct: null,
-        icv_score: null,
-      },
-    },
-    {
-      name: "Bani Yas Fleet Logistics",
-      sector: "Transportation",
-      waste: "General",
-      licenceStatus: "suspended",
-      bolisaty: {
-        vehicle_count: 15,
-        compliant_vehicles: 15,
-        vehicle_types: ["Compactor"],
-        avg_vehicle_age_years: 2.1,
-        fuel_types: ["Diesel"],
-        euro_emission_standard: null,
-        vehicle_inspection_history: null,
-        gps_equipped_active: false,
-        active_contracts: 4,
-        complaints: null,
-        customer_rating: null,
-        illegal_dumping_cases: null,
-      },
-      iwms: {
-        employee_count: 31,
-        emiratisation_pct: null,
-        icv_score: null,
-      },
-    },
-    {
-      name: "Mussafah Recovery & Treatment Co.",
-      sector: "Treatment",
-      waste: "Industrial, Organic",
-      licenceStatus: "active",
-      bolisaty: {
-        active_contracts: 11,
-        complaints: null,
-        customer_rating: null,
-      },
-      iwms: {
-        facility_design_capacity: null,
-        received_qty_tonnes_month: 3400,
-        treated_qty_tonnes_month: 3250,
-        recovered_output_qty_tonnes_month: null,
-        weighbridge_data_available: true,
-        employee_count: 140,
-        emiratisation_pct: null,
-        icv_score: null,
-      },
-    },
-    {
-      name: "Khalifa Port Recycling Facility",
-      sector: "Recycling",
-      waste: "Plastics, Metals, Paper",
-      licenceStatus: "active",
-      bolisaty: {
-        active_contracts: 22,
-        complaints: null,
-        customer_rating: null,
-      },
-      iwms: {
-        facility_design_capacity: null,
-        received_qty_tonnes_month: 2100,
-        treated_qty_tonnes_month: 2050,
-        recovered_output_qty_tonnes_month: null,
-        weighbridge_data_available: true,
-        employee_count: 88,
-        emiratisation_pct: null,
-        icv_score: null,
-      },
+      useExample: true,
+      gates: { g1: "N", g2: "N", g3: "N" },
+      previousPublishedTier: null,
     },
     {
       name: "Emirates Circular Trading FZE",
       sector: "Trading",
       waste: "Scrap Metal, E-waste",
       licenceStatus: "active",
-      bolisaty: {
-        active_contracts: 30,
-        complaints: null,
-        customer_rating: null,
-      },
-      iwms: {
-        employee_count: 22,
-        emiratisation_pct: null,
-        icv_score: null,
-      },
+      useExample: true,
+      gates: { g1: "N", g2: "N", g3: "N" },
+      previousPublishedTier: null,
     },
     {
-      name: "Al Shahama Collection Services",
-      sector: "Collection",
-      waste: "Municipal Solid Waste",
+      name: "Khalifa Port Recycling Facility",
+      sector: "Treatment",
+      waste: "Plastics, Metals, Paper (hazardous-permitted)",
       licenceStatus: "active",
-      bolisaty: {
-        vehicle_count: 60,
-        compliant_vehicles: 57,
-        vehicle_types: ["Compactor", "Skip Loader"],
-        avg_vehicle_age_years: 4.5,
-        fuel_types: ["Diesel", "CNG"],
-        euro_emission_standard: null,
-        vehicle_inspection_history: null,
-        gps_equipped_active: true,
-        active_contracts: 14,
-        complaints: null,
-        customer_rating: null,
-        illegal_dumping_cases: null,
-      },
-      iwms: {
-        employee_count: 180,
-        emiratisation_pct: null,
-        icv_score: null,
-      },
+      useExample: true,
+      gates: { g1: "N", g2: "N", g3: "Y" },
+      previousPublishedTier: null,
+    },
+    {
+      name: "Capital Clean Transport Services",
+      sector: "Transportation",
+      waste: "Hazardous, General",
+      licenceStatus: "active",
+      useExample: false,
+      gates: { g1: "N", g2: "Y", g3: "N" }, // suspended in the last 12 months -> gate-capped at Advanced
+      previousPublishedTier: "Advanced",
+    },
+    {
+      name: "Bani Yas Fleet Logistics",
+      sector: "Transportation",
+      waste: "General",
+      licenceStatus: "suspended",
+      useExample: false,
+      gates: { g1: "N", g2: "Y", g3: "N" },
+      previousPublishedTier: null,
     },
     {
       name: "Yas Industrial Waste Treatment",
       sector: "Treatment",
       waste: "Industrial, Chemical",
       licenceStatus: "expired",
-      bolisaty: {
-        active_contracts: 6,
-        complaints: null,
-        customer_rating: null,
-      },
-      iwms: {
-        facility_design_capacity: null,
-        received_qty_tonnes_month: 900,
-        treated_qty_tonnes_month: 820,
-        recovered_output_qty_tonnes_month: null,
-        weighbridge_data_available: true,
-        employee_count: 47,
-        emiratisation_pct: null,
-        icv_score: null,
-      },
+      useExample: false,
+      gates: { g1: "N", g2: "N", g3: "N" },
+      previousPublishedTier: null,
     },
   ];
 
   const insertEsp = db.prepare(
-    `INSERT INTO esps (id, legal_name, commercial_licence_number, waste_licence_number, sector, permitted_waste_types, licence_status, licence_issue_date, licence_expiry_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-  const insertSnapshot = db.prepare(
-    `INSERT INTO integrated_data_snapshots (id, esp_id, source, captured_at, payload_json) VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO esps (id, legal_name, commercial_licence_number, waste_licence_number, sector, permitted_waste_types, licence_status, licence_issue_date, licence_expiry_date, previous_published_tier)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertApplication = db.prepare(
-    `INSERT INTO applications (id, esp_id, source, stage, status, declaration_accepted, submitted_at, tamm_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO applications (id, esp_id, source, stage, status, declaration_accepted, submitted_at, tamm_reference, g1_critical_violation, g2_suspension_12mo, g3_holds_hazardous_permit)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertDoc = db.prepare(
     `INSERT INTO documents (id, application_id, doc_type, file_name, expiry_date, status) VALUES (?, ?, ?, ?, ?, ?)`
+  );
+  const insertCriterionEntry = db.prepare(
+    `INSERT INTO criterion_entries (id, application_id, criterion_id, applicable, value, evidence_verified, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'system-seed')`
   );
 
   const now = new Date();
@@ -405,8 +390,6 @@ function seed() {
   const requiredDocsBySector: Record<string, string[]> = {
     Transportation: ["Vehicle Registration Schedule", "Insurance Certificate", "Waste Carrier Permit"],
     Treatment: ["Facility Operating Permit", "Environmental Compliance Certificate", "Insurance Certificate"],
-    Recycling: ["Facility Operating Permit", "Environmental Compliance Certificate", "Insurance Certificate"],
-    Collection: ["Vehicle Registration Schedule", "Insurance Certificate", "Waste Carrier Permit"],
     Trading: ["Trade Licence Copy", "Insurance Certificate"],
   };
 
@@ -423,10 +406,9 @@ function seed() {
       e.waste,
       e.licenceStatus,
       iso(issue),
-      iso(expiry)
+      iso(expiry),
+      e.previousPublishedTier
     );
-    insertSnapshot.run(nanoid(), espId, "bolisaty", now.toISOString(), JSON.stringify(e.bolisaty));
-    insertSnapshot.run(nanoid(), espId, "iwms", now.toISOString(), JSON.stringify(e.iwms));
 
     const appId = nanoid();
     insertApplication.run(
@@ -437,132 +419,38 @@ function seed() {
       "submitted",
       1,
       addDays(now, -(3 + idx)).toISOString(),
-      `TAMM-WML-2026-${100000 + idx}`
+      `TAMM-WML-2026-${100000 + idx}`,
+      e.gates.g1,
+      e.gates.g2,
+      e.gates.g3
     );
 
     const docs = requiredDocsBySector[e.sector] ?? [];
     docs.forEach((docType, dIdx) => {
-      // Leave one doc missing on the 2nd ESP, and expire one on the "Capital Clean" ESP, to make the demo realistic
-      if (idx === 1 && dIdx === docs.length - 1) return; // missing doc
-      const expiryDate = idx === 1 && dIdx === 0 ? iso(addDays(now, -5)) : iso(addMonths(now, 9));
+      if (idx === 3 && dIdx === docs.length - 1) return; // one ESP demonstrates a missing document
+      const expiryDate = idx === 3 && dIdx === 0 ? iso(addDays(now, -5)) : iso(addMonths(now, 9));
       insertDoc.run(nanoid(), appId, docType, `${docType.replace(/\s+/g, "_")}.pdf`, expiryDate, "uploaded");
     });
-  });
 
-  // Initial published ConfigVersion (v1)
-  const criteria = [
-    {
-      code: "TRN.FLEET_COMPLIANCE",
-      sector: "Transportation",
-      name: "Vehicle compliance ratio",
-      data_source: "bolisaty.vehicles",
-      formula: "compliant_vehicles / total_vehicles",
-      weight: 0.35,
-      active: true,
-      thresholds: { T1: 0.95, T2: 0.85, T3: 0.7 },
-    },
-    {
-      code: "TRN.FLEET_AGE",
-      sector: "Transportation",
-      name: "Fleet age performance (lower is better)",
-      data_source: "bolisaty.vehicles",
-      formula: "1 - (avg_vehicle_age_years / 15)",
-      weight: 0.15,
-      active: true,
-      thresholds: { T1: 0.85, T2: 0.7, T3: 0.55 },
-    },
-    {
-      code: "TRT.RECOVERY_RATE",
-      sector: "Treatment,Recycling",
-      name: "Waste diversion / recovery rate",
-      data_source: "iwms.treatment_facility (pending EAD confirmation — currently Not Available)",
-      formula: "recovered_output_qty / received_qty",
-      weight: 0.4,
-      active: false,
-      thresholds: { T1: 0.8, T2: 0.6, T3: 0.35 },
-    },
-    {
-      code: "TRT.THROUGHPUT_UTILISATION",
-      sector: "Treatment,Recycling",
-      name: "Treatment throughput ratio",
-      data_source: "iwms.treatment_facility",
-      formula: "treated_qty / received_qty",
-      weight: 0.35,
-      active: true,
-      thresholds: { T1: 0.97, T2: 0.9, T3: 0.75 },
-    },
-    {
-      code: "COMPLIANCE.VIOLATION_FREE",
-      sector: "All",
-      name: "Compliance / violation-free ratio",
-      data_source: "ead_licensing.compliance (sample, no open violations assumed at MVP)",
-      formula: "1 - (open_violations / 1)",
-      weight: 0.3,
-      active: true,
-      thresholds: { T1: 1.0, T2: 0.9, T3: 0.75 },
-    },
-    {
-      code: "MARKET.ACTIVE_CONTRACTS",
-      sector: "All",
-      name: "Active contract base (market activity)",
-      data_source: "bolisaty.active_contracts",
-      formula: "min(active_contracts / 20, 1)",
-      weight: 0.2,
-      active: true,
-      thresholds: { T1: 0.8, T2: 0.5, T3: 0.25 },
-    },
-    {
-      code: "WORKFORCE.EMIRATISATION",
-      sector: "All",
-      name: "Emiratisation rate",
-      data_source: "iwms.workforce (pending EAD confirmation — currently Not Available)",
-      formula: "emiratisation_pct",
-      weight: 0.1,
-      active: false,
-      thresholds: { T1: 0.1, T2: 0.05, T3: 0.02 },
-    },
-    {
-      code: "ECONOMIC.ICV_SCORE",
-      sector: "All",
-      name: "In-Country Value score",
-      data_source: "to_be_identified (pending EAD confirmation — currently Not Available)",
-      formula: "icv_score / 100",
-      weight: 0.1,
-      active: false,
-      thresholds: { T1: 0.8, T2: 0.6, T3: 0.4 },
-    },
-  ];
-
-  const lifecycleRules = {
-    licence_status_gating: true,
-    suspension_cascade: true,
-    classification_validity_months: 12,
-    upgrade_cycle_months: 6,
-    review_window_days: 30,
-    gps_scope: "equipped_active_status_only",
-  };
-
-  const tierThresholds = { A: 0.85, B: 0.7, C: 0.5 }; // below C => D
-
-  const cfgId = nanoid();
-  db.prepare(
-    `INSERT INTO config_versions (id, version_number, status, criteria_json, lifecycle_rules_json, tier_thresholds_json, notes, created_by, submitted_by, submitted_at, approved_by, approved_at, approval_note, published_at)
-     VALUES (?, 1, 'published', ?, ?, ?, ?, 'system-seed', 'system-seed', datetime('now'), 'system-seed', datetime('now'), 'Initial baseline ConfigVersion seeded at MVP stand-up.', datetime('now'))`
-  ).run(
-    cfgId,
-    JSON.stringify(criteria),
-    JSON.stringify(lifecycleRules),
-    JSON.stringify(tierThresholds),
-    "Baseline scoring configuration derived from the EAD Data & Integration Requirements catalogue (Section 7.2) and the confirmed lifecycle rules (Section 8.1)."
-  );
-
-  recordAudit({
-    actorUsername: "system-seed",
-    actorRole: "admin",
-    action: "config_version.publish",
-    entityType: "config_version",
-    entityId: cfgId,
-    after: { version_number: 1, status: "published" },
+    if (e.useExample) {
+      const sectorCriteria = classificationData.sectors[e.sector].criteria;
+      for (const c of sectorCriteria) {
+        const applicable = c.exampleApplicable === "N/A" ? "N/A" : "Y";
+        const value = typeof c.exampleValue === "number" ? c.exampleValue : null;
+        insertCriterionEntry.run(nanoid(), appId, c.id, applicable, value, c.exampleEvidenceVerified ?? null);
+      }
+      if (e.gates.g3 === "Y") {
+        const insertHaz = db.prepare(
+          `INSERT INTO hazardous_module_entries (id, application_id, requirement_id, met, updated_by) VALUES (?, ?, ?, 'Y', 'system-seed')`
+        );
+        for (const h of classificationData.sectors[e.sector].hazardousModule) {
+          insertHaz.run(nanoid(), appId, h.id);
+        }
+      }
+    }
+    // ESPs with useExample=false are seeded with gates/documents only — the reviewer fills in
+    // criterion measured values and evidence through the Reviewer Portal, exactly as the real
+    // calculator's "How to use" instructions describe.
   });
 
   console.log("[seed] done.");

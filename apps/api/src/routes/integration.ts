@@ -1,7 +1,10 @@
 // Integration Gateway (Section 9): all external dependencies are reached exclusively through this
-// gateway. For the MVP demo, TAMM/AD Connect(Bolisaty)/IWMS are simulated with seeded mock payloads —
-// the real adapters are out of scope for this deliverable (Section 2.5) but the contract shape mirrors
-// Section 21.2's sample API.
+// gateway. For the MVP demo, the ESP Classification Calculator's per-criterion data sources
+// (Bolisaty, EAD Licensing, SRA, ESP uploads, site verification...) are reflected as reference text
+// on each criterion (see classification.json) rather than a live pulled payload — per the
+// calculator's own "How to use" instructions, the reviewer enters verified measured values
+// directly. TAMM is simulated with seeded ESPs; the real adapters are out of scope for this
+// deliverable (Section 2.5) but the contract shape mirrors Section 21.2's sample API.
 
 import { Router } from "express";
 import { nanoid } from "nanoid";
@@ -9,22 +12,6 @@ import { db, recordAudit } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
 export const integrationRouter = Router();
-
-integrationRouter.get("/bolisaty/:espId", requireAuth, (req, res) => {
-  const row = db
-    .prepare("SELECT payload_json, captured_at FROM integrated_data_snapshots WHERE esp_id = ? AND source = 'bolisaty' ORDER BY captured_at DESC LIMIT 1")
-    .get(req.params.espId) as { payload_json: string; captured_at: string } | undefined;
-  if (!row) return res.status(404).json({ error: "No Bolisaty snapshot for this ESP" });
-  res.json({ source: "bolisaty", captured_at: row.captured_at, data: JSON.parse(row.payload_json) });
-});
-
-integrationRouter.get("/iwms/:espId", requireAuth, (req, res) => {
-  const row = db
-    .prepare("SELECT payload_json, captured_at FROM integrated_data_snapshots WHERE esp_id = ? AND source = 'iwms' ORDER BY captured_at DESC LIMIT 1")
-    .get(req.params.espId) as { payload_json: string; captured_at: string } | undefined;
-  if (!row) return res.status(404).json({ error: "No IWMS snapshot for this ESP" });
-  res.json({ source: "iwms", captured_at: row.captured_at, data: JSON.parse(row.payload_json) });
-});
 
 // Simulates TAMM's Technical Modification sub-service pushing a new prequalification application
 // into the platform (Section 2.2, Stage 1; Section 21.2 sample contract). In production this is an
