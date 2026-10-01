@@ -127,12 +127,12 @@ export default function ApplicationDetail() {
   return (
     <div className="space-y-6">
       <div>
-        <Link to="/reviewer/queue" className="text-sm text-sky-700 hover:underline">
+        <Link to="/reviewer/queue" className="text-sm text-brand-blue-600 hover:underline">
           ← Back to queue
         </Link>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-5 flex flex-wrap items-start justify-between gap-4">
+      <div className="bg-white rounded-xl shadow-sm border border-brand-grey-100 p-5 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900">{esp.legal_name}</h1>
           <p className="text-sm text-slate-500">
@@ -382,7 +382,7 @@ export default function ApplicationDetail() {
 
 function Section({ title, subtitle, action, children }: { title: string; subtitle?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
+    <div className="bg-white rounded-xl shadow-sm border border-brand-grey-100 p-5">
       <div className="flex items-start justify-between mb-3 gap-4">
         <div>
           <h2 className="font-semibold text-slate-900">{title}</h2>
@@ -404,7 +404,7 @@ function ActionButton({ children, onClick, busy }: { children: React.ReactNode; 
     <button
       onClick={onClick}
       disabled={busy}
-      className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded hover:bg-slate-800 disabled:opacity-50 transition"
+      className="px-3 py-1.5 bg-brand-blue-600 text-white text-sm rounded hover:bg-brand-blue-700 disabled:opacity-50 transition"
     >
       {busy ? "Working…" : children}
     </button>
@@ -465,7 +465,7 @@ function DocRow({
         <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className="border border-slate-300 rounded px-2 py-0.5 text-xs" />
       </td>
       <td className="py-1.5">
-        <button onClick={save} disabled={saving} className="text-xs text-sky-700 hover:underline disabled:opacity-50">
+        <button onClick={save} disabled={saving} className="text-xs text-brand-blue-600 hover:underline disabled:opacity-50">
           Save
         </button>
       </td>
@@ -504,7 +504,7 @@ function CriterionRow({ criterion, appId, onSaved }: { criterion: Criterion; app
           <div className="text-sm font-medium text-slate-800">
             {criterion.id} — {criterion.name} <span className="text-slate-400 font-normal">({criterion.maxPts} pts)</span>
           </div>
-          <button onClick={() => setOpen((o) => !o)} className="text-xs text-sky-700 hover:underline mt-0.5">
+          <button onClick={() => setOpen((o) => !o)} className="text-xs text-brand-blue-600 hover:underline mt-0.5">
             {open ? "Hide KPI definition" : "Show KPI definition & scoring rule"}
           </button>
           {open && (
@@ -552,7 +552,7 @@ function CriterionRow({ criterion, appId, onSaved }: { criterion: Criterion; app
             <option value="N">N</option>
           </select>
         </label>
-        <button onClick={save} disabled={saving} className="text-xs text-white bg-slate-900 rounded px-3 py-1 hover:bg-slate-800 disabled:opacity-50">
+        <button onClick={save} disabled={saving} className="text-xs text-white bg-brand-blue-600 rounded px-3 py-1 hover:bg-brand-blue-700 disabled:opacity-50">
           Save
         </button>
       </div>

@@ -38,7 +38,7 @@ export default function Queue() {
               key={s || "all"}
               onClick={() => setStatus(s)}
               className={`px-3 py-1 rounded text-xs font-medium border ${
-                status === s ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-300"
+                status === s ? "bg-brand-blue-600 text-white border-brand-blue-600" : "bg-white text-slate-600 border-slate-300"
               }`}
             >
               {s ? s.replace(/_/g, " ") : "All"}
@@ -52,7 +52,7 @@ export default function Queue() {
         ESP-facing interface in this platform — every application here arrived via TAMM's existing push API.
       </p>
 
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-brand-grey-100 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
             <tr>
@@ -83,7 +83,7 @@ export default function Queue() {
             {apps.map((a) => (
               <tr key={a.id} className="border-t border-slate-100 hover:bg-slate-50">
                 <td className="px-4 py-2">
-                  <Link to={`/reviewer/applications/${a.id}`} className="font-medium text-sky-700 hover:underline">
+                  <Link to={`/reviewer/applications/${a.id}`} className="font-medium text-brand-blue-600 hover:underline">
                     {a.legal_name}
                   </Link>
                 </td>

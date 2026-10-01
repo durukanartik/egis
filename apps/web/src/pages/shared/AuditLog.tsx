@@ -44,7 +44,7 @@ export default function AuditLog() {
         </select>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-brand-grey-100 overflow-hidden">
         <table className="w-full text-xs">
           <thead className="bg-slate-50 text-slate-500 uppercase">
             <tr>
@@ -62,7 +62,7 @@ export default function AuditLog() {
                 <td className="px-4 py-2">
                   {e.actor_username} <span className="text-slate-400">({e.actor_role})</span>
                 </td>
-                <td className="px-4 py-2 font-mono text-sky-700">{e.action}</td>
+                <td className="px-4 py-2 font-mono text-brand-blue-600">{e.action}</td>
                 <td className="px-4 py-2 text-slate-600">
                   {e.entity_type}
                   {e.entity_id && <span className="text-slate-400"> #{e.entity_id.slice(0, 8)}</span>}

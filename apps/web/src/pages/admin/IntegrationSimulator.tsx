@@ -45,7 +45,7 @@ export default function IntegrationSimulator() {
         </p>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-5 max-w-xl">
+      <div className="bg-white rounded-xl shadow-sm border border-brand-grey-100 p-5 max-w-xl">
         <label className="block text-sm font-medium text-slate-700 mb-1">Environmental Service Provider</label>
         <select value={selected} onChange={(e) => setSelected(e.target.value)} className="w-full border border-slate-300 rounded px-3 py-2 text-sm mb-4">
           {esps.map((e) => (
@@ -54,7 +54,7 @@ export default function IntegrationSimulator() {
             </option>
           ))}
         </select>
-        <button onClick={simulate} disabled={busy || !selected} className="px-4 py-2 bg-slate-900 text-white text-sm rounded hover:bg-slate-800 disabled:opacity-50">
+        <button onClick={simulate} disabled={busy || !selected} className="px-4 py-2 bg-brand-blue-600 text-white text-sm rounded hover:bg-brand-blue-700 disabled:opacity-50">
           {busy ? "Submitting…" : "Simulate TAMM submission"}
         </button>
         {result && <p className="text-sm text-emerald-700 mt-3">{result}</p>}

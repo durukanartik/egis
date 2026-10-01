@@ -186,12 +186,12 @@ export default function ConfigEditor() {
   return (
     <div className="space-y-6">
       <div>
-        <Link to="/admin/config" className="text-sm text-sky-700 hover:underline">
+        <Link to="/admin/config" className="text-sm text-brand-blue-600 hover:underline">
           ← Back to config versions
         </Link>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-5 flex items-center justify-between flex-wrap gap-3">
+      <div className="bg-white rounded-xl shadow-sm border border-brand-grey-100 p-5 flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-900">ConfigVersion v{version.version_number}</h1>
           <p className="text-sm text-slate-500">Created by {version.created_by}</p>
@@ -211,7 +211,7 @@ export default function ConfigEditor() {
               key={s}
               onClick={() => setActiveSector(s)}
               className={`px-3 py-1 rounded text-xs font-medium border ${
-                activeSector === s ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-300"
+                activeSector === s ? "bg-brand-blue-600 text-white border-brand-blue-600" : "bg-white text-slate-600 border-slate-300"
               }`}
             >
               {s}
@@ -501,7 +501,7 @@ export default function ConfigEditor() {
 
 function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
+    <div className="bg-white rounded-xl shadow-sm border border-brand-grey-100 p-5">
       <h2 className="font-semibold text-slate-900">{title}</h2>
       {subtitle && <p className="text-xs text-slate-500 mt-0.5 mb-3">{subtitle}</p>}
       {children}
@@ -546,7 +546,7 @@ function WfButton({ children, onClick, busy, disabled }: { children: React.React
     <button
       onClick={onClick}
       disabled={busy || disabled}
-      className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded hover:bg-slate-800 disabled:opacity-40 transition"
+      className="px-3 py-1.5 bg-brand-blue-600 text-white text-sm rounded hover:bg-brand-blue-700 disabled:opacity-40 transition"
     >
       {busy ? "Working…" : children}
     </button>

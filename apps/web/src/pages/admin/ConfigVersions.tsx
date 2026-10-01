@@ -59,12 +59,12 @@ export default function ConfigVersions() {
             Draft → Simulate → Submit for approval → Approve (separate approver) → Publish (Section 8.3).
           </p>
         </div>
-        <button onClick={createDraft} disabled={creating} className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded hover:bg-slate-800 disabled:opacity-50">
+        <button onClick={createDraft} disabled={creating} className="px-3 py-1.5 bg-brand-blue-600 text-white text-sm rounded hover:bg-brand-blue-700 disabled:opacity-50">
           {creating ? "Creating…" : "New draft from published"}
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-brand-grey-100 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
             <tr>
@@ -81,7 +81,7 @@ export default function ConfigVersions() {
             {versions.map((v) => (
               <tr key={v.id} className="border-t border-slate-100 hover:bg-slate-50">
                 <td className="px-4 py-2">
-                  <Link to={`/admin/config/${v.id}`} className="font-medium text-sky-700 hover:underline">
+                  <Link to={`/admin/config/${v.id}`} className="font-medium text-brand-blue-600 hover:underline">
                     v{v.version_number}
                   </Link>
                 </td>
