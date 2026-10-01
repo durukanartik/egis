@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/*
+ * EAD Brand Guidelines palette, as cited in the ESP Classification & Rating Calculator (R02):
+ * Environment Green #007749, Environment Blue #004B87, Industry Grey #898D8D, Arial typeface.
+ */
+@theme {
+  --color-brand-green-50: #e6f2ec;
+  --color-brand-green-100: #c2e0d1;
+  --color-brand-green-600: #007749;
+  --color-brand-green-700: #00613c;
+  --color-brand-green-800: #004c2f;
+
+  --color-brand-blue-50: #e6edf4;
+  --color-brand-blue-100: #c2d4e6;
+  --color-brand-blue-600: #004b87;
+  --color-brand-blue-700: #003b6b;
+  --color-brand-blue-800: #002c4f;
+
+  --color-brand-grey-50: #f5f5f4;
+  --color-brand-grey-100: #e7e7e6;
+  --color-brand-grey-500: #898d8d;
+  --color-brand-grey-600: #6e7272;
+  --color-brand-grey-700: #565959;
+
+  --font-sans: Arial, "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background-color: #f4f6f7;
+  font-family: var(--font-sans);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1875rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.card {
+  background-color: white;
+  border-radius: 0.75rem;
+  border: 1px solid #e7e7e6;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+}
+
+.btn-primary {
+  background-color: var(--color-brand-blue-600);
+  color: white;
+  transition: background-color 0.15s ease;
+}
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--color-brand-blue-700);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+}
