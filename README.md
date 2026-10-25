@@ -1,13 +1,26 @@
 # EAD ESP Prequalification, Licensing & Classification Platform — MVP
 
 A demonstrable, end-to-end MVP implementing the architecture described in *EAD/ESP Platform
-Architecture v2.0* (NGtech, Sept 2026) — the Environment Agency – Abu Dhabi's platform for
-prequalifying, licensing and classifying Environmental Service Providers (ESPs).
+Architecture* (NGtech), currently tracking **System Architecture Document v7.1 (14 Oct 2026)** —
+the Environment Agency – Abu Dhabi's platform for prequalifying, licensing and classifying
+Environmental Service Providers (ESPs).
 
 This is the MVP described in the architecture document's Section 18 ("MVP Scope vs Production
 Roadmap"): a fully working end-to-end workflow on sample data, built on the same architectural
 foundation the production system will use, so that production hardening is a matter of scale-out,
 real integrations and governance rather than re-platforming.
+
+## Changelog
+
+- **v7.1** — Reworked for the revised SAD: prequalification now runs before licensing (Section
+  9.1), a fourth tier (**Below Basic**) and a **decoupled classification status** (Not classified /
+  Active / Under review / Suspended / Revoked — Section 8.1/8.2), annual reassessment replacing the
+  6-month cycle, a configurable **Dept Head approval** policy for Premium/Below Basic/tier-change
+  decisions (Section 8.2), a **consequence ladder** and **blocks** (calibration mode by default —
+  Section 8.1), and a **Public Register** (Section 11.2). New roles: `dept_head`, `licensing`. See
+  "The classification model" and "Demo walkthrough" below for the current workflow.
+- **v2.0 (initial MVP)** — Three-tier classification (Basic/Advanced/Premium), single-reviewer
+  decision model, Reviewer Portal + Admin/Config Console.
 
 ## What this is (and isn't)
 
@@ -46,15 +59,26 @@ Performance, and Digital Capability. Highlights:
   category.
 - **N/A re-scaling**: a criterion marked not applicable to a given ESP has its points redistributed
   proportionally among the rest of its category, rather than lost.
-- **Tiers**: Basic / Advanced (≥60 pts + category minimums) / Premium (≥85 pts + category
-  minimums), with a configurable retention buffer (default 3 points) so a previously published
-  tier isn't lost to a marginal one-cycle dip.
-- **Gates**: G0 (valid permit + active account — eligibility), G1 (critical violation/fatality →
-  capped at Basic), G2 (suspension in the last 12 months → capped at Advanced), G3 (holds a
-  hazardous waste permit → must pass the 5-point Hazardous Waste Module or be capped at Basic).
-- All of the above — criteria, category minimums, tier thresholds, retention buffer, gate caps —
-  are versioned ConfigVersion data, editable through the same Draft → Simulate → Approve → Publish
-  governance workflow as the rest of the platform.
+- **Four tiers**: Below Basic / Basic (≥40 pts) / Advanced (≥60 pts + category minimums) / Premium
+  (≥85 pts + category minimums), with a configurable retention buffer (default 3 points) so a
+  previously published tier isn't lost to a marginal one-cycle dip.
+- **Status is decoupled from tier** (Section 8.1/8.2): Not classified / Active / Under review /
+  Suspended / Revoked. A Suspended ESP still carries its underlying computed tier — suspension caps
+  the tier, it doesn't void the classification.
+- **Gates**: G0 (valid Authorisation + active account — eligibility; unmet ⇒ Not classified), G1
+  (critical violation/fatality → capped at Basic), G2 (suspension in the last 12 months → capped at
+  Advanced, and shows Suspended status while the suspension lasts), G3 (holds a hazardous waste
+  permit → must pass the 5-point Hazardous Waste Module or be capped at Basic).
+- **Dept Head approval** (Section 8.2, Assumption A7): a reviewer's decision takes effect
+  immediately by default; Premium, Below Basic and any change from the ESP's previously published
+  tier are held for Dept Head sign-off before the esp is updated — configurable per ConfigVersion.
+- **Prequalification runs first** (Section 9.1): assessed per ESP per activity category at entity
+  pre-registration, against its own PQ-1..PQ-10 criteria, before any Authorisation (WML or
+  Environmental Permit) is issued. Classification starts once the Authorisation is issued.
+- All of the above — criteria, category minimums, tier thresholds, retention buffer, gate caps,
+  approval policy, monitoring frequency, process periods and the consequence ladder — are versioned
+  ConfigVersion data, editable through the same Draft → Simulate → Approve → Publish governance
+  workflow as the rest of the platform.
 
 ## Architecture mapping
 
@@ -62,12 +86,14 @@ Performance, and Digital Capability. Highlights:
 |---|---|---|
 | §5–6 Logical Architecture / Microservices Catalogue | 8 bounded-context services behind an API Gateway | `apps/api/src/routes/*` + `apps/api/src/lib/*` (modularised within one Node service for MVP; each module owns its own logic exactly as the catalogue describes, ready to be split into separate deployables) |
 | §7 Data Architecture | PostgreSQL OLTP, logical data model, data classification | `apps/api/src/db.ts` (SQLite for the MVP demonstrator — schema mirrors the logical entities; swap for managed Postgres in production per §7) |
-| §8 Configurable Rules, Scoring Engine, Lifecycle Rules | Category-weighted scoring function, Draft→Simulate→Approve→Publish governance, 6-month upgrade cycle, 30-day review window, suspension cascade | `apps/api/src/lib/scoring.ts` (reimplements the EAD ESP Classification & Rating Calculator R02), `apps/api/src/lib/lifecycle.ts`, `apps/api/src/routes/config.ts`, `apps/api/src/data/classification.json` |
-| §9 Integration Architecture | Integration Gateway abstracting TAMM/AD Connect/IWMS | `apps/api/src/routes/integration.ts` (TAMM push simulator; criterion data sources are reference text per the calculator's own reviewer-entry workflow) |
-| §11 Frontend Architecture | EAD Reviewer Portal + Admin/Config Console, EAD-staff-only auth | `apps/web/src/pages/reviewer/*`, `apps/web/src/pages/admin/*` |
+| §8 Configurable Rules, Scoring Engine, Lifecycle Rules | Four-tier scoring function with decoupled status, Dept Head approval policy, Draft→Simulate→Approve→Publish governance, annual reassessment cycle, 30-day review window, suspension cascade | `apps/api/src/lib/scoring.ts` (reimplements the EAD ESP Classification & Rating Calculator R02, extended for v7.1's four-tier/status model), `apps/api/src/lib/lifecycle.ts`, `apps/api/src/routes/applications.ts` (Dept Head gate), `apps/api/src/routes/config.ts`, `apps/api/src/data/classification.json` |
+| §9.1 Prequalification & Licensing Integration | PQ assessed per activity category before any Authorisation; blocks gate issuance | `apps/api/src/routes/pq.ts`, `apps/api/src/routes/esps.ts` (blocks); PQ reuses the Application entity at `stage='prequalification'` rather than a parallel table |
+| §9 Integration Architecture | Integration Gateway abstracting TAMM/AD Connect/IWMS | `apps/api/src/routes/integration.ts` (TAMM push simulator, Appendix 21.2 contract shape; criterion data sources are reference text per the calculator's own reviewer-entry workflow) |
+| §11 Frontend Architecture | EAD Reviewer Portal + Admin/Config Console + PQ/Dept Head/Licensing consoles, EAD-staff-only auth | `apps/web/src/pages/reviewer/*`, `apps/web/src/pages/admin/*`, `apps/web/src/pages/pq/*`, `apps/web/src/pages/depthead/*`, `apps/web/src/pages/licensing/*` |
+| §11.2 Public Register | Anonymous per-ESP register — name, licence number, activity category, tier, validity and status, no scores | `apps/api/src/routes/public.ts` (no auth), `apps/web/src/pages/public/Register.tsx` |
 | §12 AI-Enabled Functionality | H1: rule-based document completeness screening | `apps/api/src/lib/aiScreening.ts` |
 | §13 Security, Privacy and Compliance | RBAC, segregation of duties, audit trail | `apps/api/src/middleware/auth.ts`, enforced per-route; segregation of duties in `config.ts` approve handler |
-| §13.2 RBAC Matrix | Reviewer / Admin / Auditor capabilities | Enforced via `requireRole()` across all routes |
+| §13.2 RBAC Matrix | Reviewer / Dept Head / Licensing / Admin / Auditor capabilities | Enforced via `requireRole()` across all routes |
 | §14 Observability | Operational dashboards | `apps/api/src/routes/reporting.ts`, `apps/web/src/pages/shared/Dashboard.tsx` |
 | §3 Audit by default | Immutable append-only audit trail | `apps/api/src/db.ts: recordAudit()`, called from every mutating route; `apps/web/src/pages/shared/AuditLog.tsx` |
 
@@ -76,7 +102,7 @@ Performance, and Digital Capability. Highlights:
 Requires Node.js 22+.
 
 ```bash
-# Backend (seeds sample data on first run — 6 ESPs across all 3 sectors)
+# Backend (seeds sample data on first run — 8 ESPs across all 3 sectors, incl. 2 at the PQ stage)
 cd apps/api
 npm install
 npm run dev        # http://localhost:4000
@@ -92,10 +118,15 @@ screen (password `Password123!` for all):
 
 | Username | Role | Purpose |
 |---|---|---|
-| `reviewer1` | Reviewer | Review queue, eligibility, AI screening, scoring, decisions |
-| `admin1` | Admin | Drafts configuration changes (criteria, weights, lifecycle rules) |
+| `reviewer1` | Reviewer | PQ queue, review queue, eligibility, AI screening, scoring, decisions |
+| `depthead1` | Dept Head | Approves/rejects decisions the approval policy holds back (Premium, Below Basic, tier change) |
+| `licensing1` | Licensing | Issues Authorisations once PQ is Eligible; raises/lifts blocks |
+| `admin1` | Admin | Drafts configuration changes (criteria, weights, lifecycle rules, approval policy) |
 | `admin2` | Admin | Approves & publishes configuration — segregation of duties from `admin1` is enforced server-side |
 | `auditor1` | Auditor | Read-only audit trail and dashboards |
+
+All authenticated roles can also view the **Public Register** (`/register`, Section 11.2) — the
+only page in the app that needs no sign-in.
 
 To reset to fresh seed data, stop the API and delete `apps/api/data/`.
 
@@ -118,9 +149,13 @@ images, unmodified.
 The three "golden" ESPs (Al Dhafra Waste Transport, Emirates Circular Trading, Khalifa Port
 Recycling Facility) are pre-seeded with the calculator's own illustrative example data — opening
 any of them and running scoring reproduces the workbook's own numbers exactly, so they're the
-fastest way to show the engine is correct. The other three (Capital Clean, Bani Yas, Yas
-Industrial) are seeded with gates and documents only, so you can demonstrate the reviewer actually
-filling in criterion data from scratch.
+fastest way to show the engine is correct. Capital Clean, Bani Yas and Yas Industrial are seeded
+with gates and documents only, so you can demonstrate the reviewer filling in criterion data from
+scratch. Two further ESPs (Barakah Logistics & Trading, Mussafah Transport Solutions) are seeded at
+the **prequalification** stage — no Authorisation issued yet — to demonstrate the new PQ → Licensing
+journey end to end.
+
+**Classification (unchanged from v2.0's golden-path demo):**
 
 1. **Sign in as `admin1`** → *TAMM Simulator* → pick an ESP → *Simulate TAMM submission*. This
    mimics TAMM's Technical Modification sub-service pushing a new application — there is no
@@ -135,16 +170,37 @@ filling in criterion data from scratch.
    Module** section and a **Premium** result (86/100). Open **Capital Clean Transport Services** to
    see a gate-capped scenario (G2 = Y, suspended in the last 12 months caps it at Advanced) with no
    criterion data yet entered — fill in a few criteria yourself to see scores update.
-4. **Sign in as `admin1`** → *Config Versions* → open **v1** to see the full 68-criterion catalogue
-   across all three sector tabs, the category minimums, tier thresholds, retention buffer and gate
-   caps — all exactly as published by EAD. *New draft from published* → adjust a threshold →
-   *Simulate against sample ESPs* (dry-run diff against the live config, no writes) → *Submit for
-   approval*.
-5. **Sign in as `admin2`** → open the same draft → *Approve* (this fails if attempted as `admin1`,
+
+**Prequalification → Licensing (new in v7.1):**
+
+4. Still as `reviewer1` → *PQ Queue* → open **Barakah Logistics & Trading Co.** (already decided
+   Eligible) to see the PQ-1..PQ-10 criteria and decision. Open **Mussafah Transport Solutions LLC**
+   (still Under review) → set its remaining criteria to *Eligible* → *Record PQ decision* (Eligible).
+5. **Sign in as `licensing1`** → *Licensing Console* → both ESPs now show under "Ready to issue" →
+   *Issue Authorisation* for one of them. This activates its WML, and opens a classification
+   application for it — back in `reviewer1`'s Review Queue. Try *Manage blocks*: raise a block on an
+   ESP, confirm issuance is refused while it's active, then lift it.
+
+**Dept Head approval (new in v7.1):**
+
+6. As `reviewer1`, on any classification application, record a *Decision* with tier **Premium** or
+   **Below Basic** (or any tier different from the ESP's previously published one). The application
+   moves to *awaiting Dept Head* instead of taking effect immediately, and *Push result to TAMM* is
+   blocked. **Sign in as `depthead1`** → *Approval Queue* → open it → *Approve* (or *Reject*, which
+   sends it back to the reviewer). Only on approval does the esp's tier actually update.
+
+**Configuration governance (unchanged, now with more parameters):**
+
+7. **Sign in as `admin1`** → *Config Versions* → open **v1** to see the full 68-criterion catalogue
+   across all three sector tabs, the category minimums, tier thresholds, retention buffer, gate
+   caps, approval policy, monitoring frequency, process periods and the consequence ladder — all
+   exactly as published by EAD. *New draft from published* → adjust a threshold → *Simulate against
+   sample ESPs* (dry-run diff against the live config, no writes) → *Submit for approval*.
+8. **Sign in as `admin2`** → open the same draft → *Approve* (this fails if attempted as `admin1`,
    proving segregation of duties) → *Publish*. All subsequent scoring runs use the new
    ConfigVersion; historical ScoreRuns keep referencing the version they were computed under.
-6. **Sign in as `auditor1`** (or any role) → *Audit Log* / *Dashboard* to see the full immutable
-   trail of everything above.
+9. **Sign in as `auditor1`** (or any role) → *Audit Log* / *Dashboard* to see the full immutable
+   trail of everything above. Visit `/register` (no sign-in needed) for the Public Register.
 
 ## Verified against the source spreadsheet
 

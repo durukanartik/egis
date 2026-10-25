@@ -29,10 +29,26 @@ type ClassificationParameters = {
   advancedMinTotal: number;
   premiumMinTotal: number;
   retentionBufferPoints: number;
+  suspensionAdvancedCapMonths: number;
   gateCapG1: string;
   gateCapG2: string;
   gateCapG3: string;
   categoryMinimums: Record<string, { advanced: number; premium: number }>;
+  approvalPolicy: {
+    singleReviewerDefault: boolean;
+    deptHeadRequiredForTiers: string[];
+    deptHeadRequiredOnTierChange: boolean;
+    appealDaysAlways: number;
+  };
+  monitoringFrequency: Record<string, string>;
+  processPeriods: Record<string, number | null>;
+  consequencesEnabled: boolean;
+  consequenceLadder: {
+    cyclesBelowBasicForCAP: number;
+    cyclesBelowBasicForBlock: number;
+    blockDurationMonths: number;
+    cyclesAtBasicForImprovementPlan: number;
+  };
 };
 
 type LifecycleRules = {
@@ -131,6 +147,39 @@ export default function ConfigEditor() {
         },
       },
     });
+  }
+
+  function updateApprovalPolicy(patch: Partial<ClassificationParameters["approvalPolicy"]>) {
+    if (!version) return;
+    setVersion({ ...version, classification_parameters: { ...version.classification_parameters, approvalPolicy: { ...version.classification_parameters.approvalPolicy, ...patch } } });
+  }
+
+  function toggleDeptHeadTier(tier: string) {
+    if (!version) return;
+    const current = version.classification_parameters.approvalPolicy.deptHeadRequiredForTiers;
+    const next = current.includes(tier) ? current.filter((t) => t !== tier) : [...current, tier];
+    updateApprovalPolicy({ deptHeadRequiredForTiers: next });
+  }
+
+  function updateMonitoringFrequency(tier: string, value: string) {
+    if (!version) return;
+    setVersion({
+      ...version,
+      classification_parameters: { ...version.classification_parameters, monitoringFrequency: { ...version.classification_parameters.monitoringFrequency, [tier]: value } },
+    });
+  }
+
+  function updateProcessPeriod(key: string, value: number | null) {
+    if (!version) return;
+    setVersion({
+      ...version,
+      classification_parameters: { ...version.classification_parameters, processPeriods: { ...version.classification_parameters.processPeriods, [key]: value } },
+    });
+  }
+
+  function updateConsequenceLadder(patch: Partial<ClassificationParameters["consequenceLadder"]>) {
+    if (!version) return;
+    setVersion({ ...version, classification_parameters: { ...version.classification_parameters, consequenceLadder: { ...version.classification_parameters.consequenceLadder, ...patch } } });
   }
 
   async function act(key: string, fn: () => Promise<unknown>) {
@@ -368,7 +417,7 @@ export default function ConfigEditor() {
             />
           </Field>
         </div>
-        <div className="grid md:grid-cols-3 gap-4 text-sm">
+        <div className="grid md:grid-cols-4 gap-4 text-sm">
           <Field label="Tier cap if G1 (critical violation/fatality)">
             <TierSelect disabled={!editable} value={version.classification_parameters.gateCapG1} onChange={(v) => updateParams({ gateCapG1: v })} />
           </Field>
@@ -377,6 +426,155 @@ export default function ConfigEditor() {
           </Field>
           <Field label="Tier cap if G3 hazardous module FAIL">
             <TierSelect disabled={!editable} value={version.classification_parameters.gateCapG3} onChange={(v) => updateParams({ gateCapG3: v })} />
+          </Field>
+          <Field label="G2 cap duration after suspension lifted (months)">
+            <input
+              type="number"
+              disabled={!editable}
+              value={version.classification_parameters.suspensionAdvancedCapMonths}
+              onChange={(e) => updateParams({ suspensionAdvancedCapMonths: Number(e.target.value) })}
+              className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+            />
+          </Field>
+        </div>
+      </Section>
+
+      <Section title="Approval Policy" subtitle="Section 8.2, Assumption A7 — single reviewer by default; Dept Head sign-off is required for selected tiers and any tier change.">
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            type="checkbox"
+            id="singleReviewerDefault"
+            disabled={!editable}
+            checked={version.classification_parameters.approvalPolicy.singleReviewerDefault}
+            onChange={(e) => updateApprovalPolicy({ singleReviewerDefault: e.target.checked })}
+          />
+          <label htmlFor="singleReviewerDefault" className="text-sm text-slate-700">
+            Single reviewer by default (otherwise every decision needs Dept Head approval)
+          </label>
+        </div>
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            type="checkbox"
+            id="deptHeadOnTierChange"
+            disabled={!editable}
+            checked={version.classification_parameters.approvalPolicy.deptHeadRequiredOnTierChange}
+            onChange={(e) => updateApprovalPolicy({ deptHeadRequiredOnTierChange: e.target.checked })}
+          />
+          <label htmlFor="deptHeadOnTierChange" className="text-sm text-slate-700">
+            Require Dept Head approval on any change from the ESP's previously published tier
+          </label>
+        </div>
+        <div className="mb-3">
+          <span className="text-xs text-slate-500 block mb-1">Tiers that always require Dept Head approval</span>
+          <div className="flex gap-3">
+            {["Below Basic", "Basic", "Advanced", "Premium"].map((t) => (
+              <label key={t} className="flex items-center gap-1.5 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  disabled={!editable}
+                  checked={version.classification_parameters.approvalPolicy.deptHeadRequiredForTiers.includes(t)}
+                  onChange={() => toggleDeptHeadTier(t)}
+                />
+                {t}
+              </label>
+            ))}
+          </div>
+        </div>
+        <Field label="Appeal window (days, in all cases)">
+          <input
+            type="number"
+            disabled={!editable}
+            value={version.classification_parameters.approvalPolicy.appealDaysAlways}
+            onChange={(e) => updateApprovalPolicy({ appealDaysAlways: Number(e.target.value) })}
+            className="w-40 border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+          />
+        </Field>
+      </Section>
+
+      <Section title="Monitoring Frequency" subtitle="Section 8.7 — continuous-monitoring review cadence by tier.">
+        <div className="grid md:grid-cols-4 gap-4 text-sm">
+          {["Premium", "Advanced", "Basic", "Below Basic"].map((tier) => (
+            <Field key={tier} label={tier}>
+              <input
+                disabled={!editable}
+                value={version.classification_parameters.monitoringFrequency[tier] ?? ""}
+                onChange={(e) => updateMonitoringFrequency(tier, e.target.value)}
+                className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+              />
+            </Field>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Process Periods" subtitle="Section 8.7 — evidence, assessment, verification, approval and appeal windows (days unless noted).">
+        <div className="grid md:grid-cols-4 gap-4 text-sm">
+          {Object.entries(version.classification_parameters.processPeriods).map(([key, value]) => (
+            <Field key={key} label={key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase())}>
+              <input
+                type="number"
+                disabled={!editable}
+                value={value ?? ""}
+                placeholder="Not set"
+                onChange={(e) => updateProcessPeriod(key, e.target.value === "" ? null : Number(e.target.value))}
+                className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+              />
+            </Field>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title="Consequence Ladder"
+        subtitle="Section 8.1 — CAP, block and improvement-plan triggers. Consequences apply only once enabled; while disabled the platform runs in calibration mode."
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            type="checkbox"
+            id="consequencesEnabled"
+            disabled={!editable}
+            checked={version.classification_parameters.consequencesEnabled}
+            onChange={(e) => updateParams({ consequencesEnabled: e.target.checked })}
+          />
+          <label htmlFor="consequencesEnabled" className="text-sm text-slate-700">
+            Consequences enabled (unchecked = calibration mode; ladder is tracked but not enforced)
+          </label>
+        </div>
+        <div className="grid md:grid-cols-4 gap-4 text-sm">
+          <Field label="Cycles below Basic for a CAP">
+            <input
+              type="number"
+              disabled={!editable}
+              value={version.classification_parameters.consequenceLadder.cyclesBelowBasicForCAP}
+              onChange={(e) => updateConsequenceLadder({ cyclesBelowBasicForCAP: Number(e.target.value) })}
+              className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+            />
+          </Field>
+          <Field label="Consecutive cycles below Basic for a block">
+            <input
+              type="number"
+              disabled={!editable}
+              value={version.classification_parameters.consequenceLadder.cyclesBelowBasicForBlock}
+              onChange={(e) => updateConsequenceLadder({ cyclesBelowBasicForBlock: Number(e.target.value) })}
+              className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+            />
+          </Field>
+          <Field label="Block duration (months)">
+            <input
+              type="number"
+              disabled={!editable}
+              value={version.classification_parameters.consequenceLadder.blockDurationMonths}
+              onChange={(e) => updateConsequenceLadder({ blockDurationMonths: Number(e.target.value) })}
+              className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+            />
+          </Field>
+          <Field label="Cycles at Basic for an improvement plan">
+            <input
+              type="number"
+              disabled={!editable}
+              value={version.classification_parameters.consequenceLadder.cyclesAtBasicForImprovementPlan}
+              onChange={(e) => updateConsequenceLadder({ cyclesAtBasicForImprovementPlan: Number(e.target.value) })}
+              className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+            />
           </Field>
         </div>
       </Section>
