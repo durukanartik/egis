@@ -1,4 +1,4 @@
-export type Role = "reviewer" | "admin" | "auditor";
+export type Role = "reviewer" | "dept_head" | "licensing" | "admin" | "auditor";
 
 export type AuthUser = {
   id: string;

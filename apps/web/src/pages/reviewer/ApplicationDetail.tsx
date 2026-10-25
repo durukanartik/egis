@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
 import { StatusBadge, TierBadge } from "../../components/Badges";
+import { useAuth } from "../../auth/AuthContext";
 
 type Criterion = {
   id: string;
@@ -81,7 +82,19 @@ type Detail = {
       }[];
     };
   }[];
-  decisions: { id: string; decision: string; tier: string | null; note: string | null; decided_by: string; decided_at: string; pushed_to_tamm: number }[];
+  decisions: {
+    id: string;
+    decision: string;
+    tier: string | null;
+    note: string | null;
+    decided_by: string;
+    decided_at: string;
+    pushed_to_tamm: number;
+    dept_head_status: "not_required" | "pending" | "approved" | "rejected";
+    dept_head_by: string | null;
+    dept_head_at: string | null;
+    dept_head_note: string | null;
+  }[];
   upgrade_eligibility: { eligible: boolean; reason?: string; nextEligibleDate?: string } | null;
 };
 
@@ -94,6 +107,7 @@ const CATEGORY_ORDER = [
 
 export default function ApplicationDetail() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -363,23 +377,40 @@ export default function ApplicationDetail() {
       )}
 
       {/* Decision */}
-      <Section title="Decision" subtitle="Single-reviewer decision model — the reviewer's decision remains the legal record.">
+      <Section
+        title="Decision"
+        subtitle="Single-reviewer decision model — Premium, Below Basic and any change of tier are held for Dept Head approval before they take effect (Section 8.2)."
+      >
         {latestDecision && (
           <div className="text-sm mb-3 bg-slate-50 rounded p-3">
-            <StatusBadge status={latestDecision.decision} /> <TierBadge tier={latestDecision.tier} />
+            <StatusBadge status={latestDecision.decision} /> <TierBadge tier={latestDecision.tier} />{" "}
+            {latestDecision.dept_head_status !== "not_required" && <StatusBadge status={latestDecision.dept_head_status === "pending" ? "awaiting_dept_head" : latestDecision.dept_head_status} />}
             <p className="text-slate-600 mt-1">{latestDecision.note}</p>
             <p className="text-xs text-slate-400 mt-1">
               {latestDecision.decided_by} · {new Date(latestDecision.decided_at).toLocaleString()} ·{" "}
-              {latestDecision.pushed_to_tamm ? "Pushed to TAMM" : "Not yet pushed to TAMM"}
+              {latestDecision.dept_head_status === "pending"
+                ? "Awaiting Dept Head approval"
+                : latestDecision.pushed_to_tamm
+                  ? "Pushed to TAMM"
+                  : "Not yet pushed to TAMM"}
             </p>
-            {!latestDecision.pushed_to_tamm && (
+            {latestDecision.dept_head_note && (
+              <p className="text-xs text-slate-500 mt-1">
+                Dept Head ({latestDecision.dept_head_by}, {latestDecision.dept_head_at && new Date(latestDecision.dept_head_at).toLocaleString()}):{" "}
+                {latestDecision.dept_head_note}
+              </p>
+            )}
+            {latestDecision.dept_head_status !== "pending" && !latestDecision.pushed_to_tamm && latestDecision.dept_head_status !== "rejected" && (
               <ActionButton busy={busy === "push"} onClick={() => runAction("push", () => api(`/applications/${application.id}/push-to-tamm`, { method: "POST" }))}>
                 Push result to TAMM
               </ActionButton>
             )}
+            {latestDecision.dept_head_status === "pending" && (user?.role === "dept_head" || user?.role === "admin") && (
+              <DeptHeadReviewForm appId={application.id} decisionId={latestDecision.id} onSaved={load} />
+            )}
           </div>
         )}
-        {(!latestDecision || latestDecision.decision !== "approved") && (
+        {(!latestDecision || latestDecision.decision !== "approved" || latestDecision.dept_head_status === "rejected") && (
           <DecisionForm
             appId={application.id}
             suggestedTier={latestScore ? (latestScore.overridden ? latestScore.override_tier! : latestScore.result.finalTier ?? undefined) : undefined}
@@ -655,6 +686,47 @@ function OverrideForm({ appId, scoreRunId, onSaved }: { appId: string; scoreRunI
         </button>
         <button onClick={() => setOpen(false)} className="px-3 py-1 text-xs text-slate-500">
           Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeptHeadReviewForm({ appId, decisionId, onSaved }: { appId: string; decisionId: string; onSaved: () => void }) {
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function review(approve: boolean) {
+    setBusy(approve ? "approve" : "reject");
+    setErr(null);
+    try {
+      await api(`/applications/${appId}/decision/${decisionId}/dept-head-review`, { method: "POST", body: JSON.stringify({ approve, note }) });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded p-3 mt-2 space-y-2">
+      <p className="text-xs font-medium text-amber-800">Dept Head review required before this tier takes effect.</p>
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Review note (optional)…"
+        className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
+        rows={2}
+      />
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      <div className="flex gap-2">
+        <button onClick={() => review(true)} disabled={!!busy} className="px-3 py-1 bg-emerald-600 text-white text-xs rounded hover:bg-emerald-700 disabled:opacity-50">
+          {busy === "approve" ? "Working…" : "Approve"}
+        </button>
+        <button onClick={() => review(false)} disabled={!!busy} className="px-3 py-1 bg-rose-600 text-white text-xs rounded hover:bg-rose-700 disabled:opacity-50">
+          {busy === "reject" ? "Working…" : "Reject"}
         </button>
       </div>
     </div>

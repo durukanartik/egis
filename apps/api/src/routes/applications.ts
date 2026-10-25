@@ -84,13 +84,15 @@ function getGates(app: AppRow, esp: EspRow): Gates {
   };
 }
 
+// Classification-stage applications only — prequalification-stage applications have their own
+// queue and shape at /api/pq.
 applicationsRouter.get("/", (req, res) => {
   const status = typeof req.query.status === "string" ? req.query.status : undefined;
   const rows = db
     .prepare(
       `SELECT a.*, e.legal_name, e.sector, e.licence_status, e.current_tier, e.classification_status
        FROM applications a JOIN esps e ON e.id = a.esp_id
-       ${status ? "WHERE a.status = ?" : ""}
+       WHERE a.stage = 'classification' ${status ? "AND a.status = ?" : ""}
        ORDER BY a.submitted_at DESC`
     )
     .all(...(status ? [status] : []));

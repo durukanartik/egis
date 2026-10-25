@@ -35,6 +35,7 @@ export const TIER_ORDINAL: Record<string, string> = {
 };
 
 export const LICENCE_STATUS_COLOR: Record<string, string> = {
+  pending: "#898781",
   active: STATUS.good,
   expired: STATUS.warning,
   suspended: STATUS.critical,

@@ -9,6 +9,7 @@ import { reportingRouter } from "./routes/reporting.js";
 import { espsRouter } from "./routes/esps.js";
 import { integrationRouter } from "./routes/integration.js";
 import { pqRouter } from "./routes/pq.js";
+import { publicRouter } from "./routes/public.js";
 
 const app = express();
 app.use(cors());
@@ -24,6 +25,7 @@ app.use("/api/reporting", reportingRouter);
 app.use("/api/esps", espsRouter);
 app.use("/api/integration", integrationRouter);
 app.use("/api/pq", pqRouter);
+app.use("/api/public", publicRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

@@ -4,7 +4,9 @@ import { useAuth } from "../auth/AuthContext";
 import { ApiError } from "../api/client";
 
 const DEMO_ACCOUNTS = [
-  { username: "reviewer1", role: "Reviewer", note: "Review queue, scoring, decisions" },
+  { username: "reviewer1", role: "Reviewer", note: "PQ & review queues, scoring, decisions" },
+  { username: "depthead1", role: "Dept Head", note: "Approves Premium, Below Basic & tier changes" },
+  { username: "licensing1", role: "Licensing", note: "Issues Authorisations, manages blocks" },
   { username: "admin1", role: "Admin (editor)", note: "Drafts configuration changes" },
   { username: "admin2", role: "Admin (approver)", note: "Approves & publishes configuration" },
   { username: "auditor1", role: "Auditor", note: "Read-only audit trail & dashboards" },

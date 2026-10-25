@@ -34,6 +34,14 @@ const STATUS_COLORS: Record<string, string> = {
   "Under review": "bg-amber-50 text-amber-800",
   Suspended: "bg-rose-50 text-rose-700",
   Revoked: "bg-rose-50 text-rose-700",
+  // PQ overall result (Appendix 21.2 / Section 7.1)
+  Eligible: "bg-brand-green-50 text-brand-green-800",
+  Conditional: "bg-amber-50 text-amber-800",
+  "Not eligible": "bg-rose-50 text-rose-700",
+  "Manual review": "bg-violet-50 text-violet-700",
+  // Application status (additional v7.1 values)
+  awaiting_dept_head: "bg-amber-50 text-amber-800",
+  pending: "bg-brand-grey-50 text-brand-grey-700",
 };
 
 export function StatusBadge({ status }: { status: string }) {

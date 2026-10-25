@@ -19,7 +19,7 @@ const STATUS_ORDER = ["submitted", "under_review", "eligibility_failed", "scorin
 const TIER_ORDER = ["Below Basic", "Basic", "Advanced", "Premium"];
 const CLASSIFICATION_STATUS_ORDER = ["Not classified", "Active", "Under review", "Suspended", "Revoked"];
 const SECTOR_ORDER = ["Transportation", "Trading", "Treatment"];
-const LICENCE_ORDER = ["active", "expired", "suspended", "revoked"];
+const LICENCE_ORDER = ["pending", "active", "expired", "suspended", "revoked"];
 
 function orderAndFill<T extends { count: number }>(rows: T[], order: string[], key: keyof T): T[] {
   const map = new Map(rows.map((r) => [r[key] as unknown as string, r]));

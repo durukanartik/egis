@@ -4,17 +4,37 @@ import { useAuth } from "../auth/AuthContext";
 const LINKS: Record<string, { to: string; label: string }[]> = {
   reviewer: [
     { to: "/reviewer/queue", label: "Review Queue" },
+    { to: "/pq", label: "PQ Queue" },
     { to: "/dashboard", label: "Dashboard" },
+    { to: "/register", label: "Public Register" },
+    { to: "/audit", label: "Audit Log" },
+  ],
+  dept_head: [
+    { to: "/dept-head/queue", label: "Approval Queue" },
+    { to: "/dashboard", label: "Dashboard" },
+    { to: "/register", label: "Public Register" },
+    { to: "/audit", label: "Audit Log" },
+  ],
+  licensing: [
+    { to: "/licensing", label: "Licensing Console" },
+    { to: "/pq", label: "PQ Queue" },
+    { to: "/dashboard", label: "Dashboard" },
+    { to: "/register", label: "Public Register" },
     { to: "/audit", label: "Audit Log" },
   ],
   admin: [
     { to: "/admin/config", label: "Config Versions" },
     { to: "/admin/integration", label: "TAMM Simulator" },
+    { to: "/pq", label: "PQ Queue" },
+    { to: "/dept-head/queue", label: "Approval Queue" },
+    { to: "/licensing", label: "Licensing Console" },
     { to: "/dashboard", label: "Dashboard" },
+    { to: "/register", label: "Public Register" },
     { to: "/audit", label: "Audit Log" },
   ],
   auditor: [
     { to: "/dashboard", label: "Dashboard" },
+    { to: "/register", label: "Public Register" },
     { to: "/audit", label: "Audit Log" },
   ],
 };
