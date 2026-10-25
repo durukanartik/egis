@@ -431,23 +431,29 @@ applicationsRouter.post("/:id/decision", requireRole("reviewer"), (req, res) => 
   if (!app) return res.status(404).json({ error: "Application not found" });
   if (app.stage !== "classification") return res.status(409).json({ error: "Decisions apply only to classification-stage applications" });
 
+  const config = getPublishedConfig();
+  const esp = getEsp(app.esp_id);
+
+  // Dept Head approval gate (Section 8.2, Assumption A7): Premium, Below Basic and any tier change
+  // need sign-off before the esp is updated; every other approved decision takes effect immediately
+  // (single-reviewer default).
+  const policy = config?.parameters.approvalPolicy;
+  const requiresDeptHead =
+    decision === "approved" &&
+    !!tier &&
+    !!policy &&
+    (policy.deptHeadRequiredForTiers.includes(tier) ||
+      (policy.deptHeadRequiredOnTierChange && esp.previous_published_tier !== null && tier !== esp.previous_published_tier));
+
   const id = nanoid();
   db.prepare(
-    `INSERT INTO decisions (id, application_id, decision, tier, note, decided_by) VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, req.params.id, decision, tier ?? null, note ?? null, req.user!.username);
+    `INSERT INTO decisions (id, application_id, decision, tier, note, decided_by, dept_head_status) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, req.params.id, decision, tier ?? null, note ?? null, req.user!.username, requiresDeptHead ? "pending" : "not_required");
 
-  db.prepare("UPDATE applications SET status = 'decided' WHERE id = ?").run(req.params.id);
+  db.prepare("UPDATE applications SET status = ? WHERE id = ?").run(requiresDeptHead ? "awaiting_dept_head" : "decided", req.params.id);
 
-  if (decision === "approved" && tier) {
-    const config = getPublishedConfig();
-    const validityMonths = config?.lifecycleRules.classification_validity_months ?? 12;
-    const validUntil = new Date();
-    validUntil.setMonth(validUntil.getMonth() + validityMonths);
-    const esp = getEsp(app.esp_id);
-    const status = esp.licence_status === "suspended" ? "Suspended" : "Active";
-    db.prepare(
-      `UPDATE esps SET current_tier = ?, previous_published_tier = ?, classification_status = ?, last_classification_at = datetime('now'), classification_valid_until = ? WHERE id = ?`
-    ).run(tier, tier, status, validUntil.toISOString().slice(0, 10), app.esp_id);
+  if (decision === "approved" && tier && !requiresDeptHead) {
+    applyApprovedTier(app.esp_id, tier, esp, config);
   }
 
   recordAudit({
@@ -457,18 +463,70 @@ applicationsRouter.post("/:id/decision", requireRole("reviewer"), (req, res) => 
     action: "application.decide",
     entityType: "application",
     entityId: req.params.id,
-    after: { decision, tier, note },
+    after: { decision, tier, note, requires_dept_head_approval: requiresDeptHead },
   });
 
-  res.json({ id, decision, tier });
+  res.json({ id, decision, tier, requires_dept_head_approval: requiresDeptHead });
+});
+
+function applyApprovedTier(espId: string, tier: Tier, esp: EspRow, config: ReturnType<typeof getPublishedConfig>) {
+  const validityMonths = config?.lifecycleRules.classification_validity_months ?? 12;
+  const validUntil = new Date();
+  validUntil.setMonth(validUntil.getMonth() + validityMonths);
+  const status = esp.licence_status === "suspended" ? "Suspended" : "Active";
+  db.prepare(
+    `UPDATE esps SET current_tier = ?, previous_published_tier = ?, classification_status = ?, last_classification_at = datetime('now'), classification_valid_until = ? WHERE id = ?`
+  ).run(tier, tier, status, validUntil.toISOString().slice(0, 10), espId);
+}
+
+// Dept Head review of a decision the approval policy held back (Premium, Below Basic, or any tier
+// change). Approving applies the esp update that /decision deferred; rejecting sends the
+// application back to the reviewer without touching the esp.
+applicationsRouter.post("/:id/decision/:decisionId/dept-head-review", requireRole("dept_head", "admin"), (req, res) => {
+  const app = getApplication(req.params.id);
+  if (!app) return res.status(404).json({ error: "Application not found" });
+
+  const decisionRow = db.prepare("SELECT * FROM decisions WHERE id = ? AND application_id = ?").get(req.params.decisionId, req.params.id) as
+    | { id: string; tier: string | null; dept_head_status: string }
+    | undefined;
+  if (!decisionRow) return res.status(404).json({ error: "Decision not found" });
+  if (decisionRow.dept_head_status !== "pending") return res.status(409).json({ error: "This decision is not awaiting Dept Head review" });
+
+  const { approve, note } = req.body ?? {};
+  if (typeof approve !== "boolean") return res.status(400).json({ error: "approve (boolean) is required" });
+
+  db.prepare(
+    `UPDATE decisions SET dept_head_status = ?, dept_head_by = ?, dept_head_at = datetime('now'), dept_head_note = ? WHERE id = ?`
+  ).run(approve ? "approved" : "rejected", req.user!.username, note ?? null, req.params.decisionId);
+
+  db.prepare("UPDATE applications SET status = ? WHERE id = ?").run(approve ? "decided" : "scoring", req.params.id);
+
+  if (approve && decisionRow.tier) {
+    const config = getPublishedConfig();
+    const esp = getEsp(app.esp_id);
+    applyApprovedTier(app.esp_id, decisionRow.tier as Tier, esp, config);
+  }
+
+  recordAudit({
+    actorId: req.user!.id,
+    actorUsername: req.user!.username,
+    actorRole: req.user!.role,
+    action: approve ? "dept_head.approved" : "dept_head.rejected",
+    entityType: "decision",
+    entityId: req.params.decisionId,
+    after: { approve, note, tier: decisionRow.tier },
+  });
+
+  res.json({ ok: true, approve });
 });
 
 // Simulates pushing the tier/status result back to TAMM via the existing API (Section 2.2, Stage 3).
 applicationsRouter.post("/:id/push-to-tamm", requireRole("reviewer", "admin"), (req, res) => {
   const decision = db
     .prepare("SELECT * FROM decisions WHERE application_id = ? ORDER BY decided_at DESC LIMIT 1")
-    .get(req.params.id) as { id: string; pushed_to_tamm: number } | undefined;
+    .get(req.params.id) as { id: string; pushed_to_tamm: number; dept_head_status: string } | undefined;
   if (!decision) return res.status(409).json({ error: "No decision recorded yet for this application" });
+  if (decision.dept_head_status === "pending") return res.status(409).json({ error: "This decision is still awaiting Dept Head approval" });
 
   db.prepare("UPDATE decisions SET pushed_to_tamm = 1, pushed_at = datetime('now') WHERE id = ?").run(decision.id);
 

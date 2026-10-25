@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS applications (
   esp_id TEXT NOT NULL REFERENCES esps(id),
   source TEXT NOT NULL DEFAULT 'TAMM_TECHNICAL_MODIFICATION',
   stage TEXT NOT NULL DEFAULT 'prequalification' CHECK (stage IN ('prequalification','licence_gating','classification')),
-  status TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted','under_review','eligibility_failed','scoring','decided','voided')),
+  status TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted','under_review','eligibility_failed','scoring','awaiting_dept_head','decided','voided')),
   declaration_accepted INTEGER NOT NULL DEFAULT 1,
   submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
   tamm_reference TEXT NOT NULL,
@@ -194,6 +194,10 @@ CREATE TABLE IF NOT EXISTS score_runs (
   override_at TEXT
 );
 
+-- Dept Head approval (Section 8.2, Assumption A7): a reviewer's decision takes effect immediately
+-- (single-reviewer default) unless the tier is Premium or Below Basic, or the tier changes from the
+-- ESP's previously published tier (ConfigVersion.classification_parameters.approvalPolicy) — then the
+-- esp update is held until a Dept Head approves it.
 CREATE TABLE IF NOT EXISTS decisions (
   id TEXT PRIMARY KEY,
   application_id TEXT NOT NULL REFERENCES applications(id),
@@ -203,7 +207,11 @@ CREATE TABLE IF NOT EXISTS decisions (
   decided_by TEXT NOT NULL,
   decided_at TEXT NOT NULL DEFAULT (datetime('now')),
   pushed_to_tamm INTEGER NOT NULL DEFAULT 0,
-  pushed_at TEXT
+  pushed_at TEXT,
+  dept_head_status TEXT NOT NULL DEFAULT 'not_required' CHECK (dept_head_status IN ('not_required','pending','approved','rejected')),
+  dept_head_by TEXT,
+  dept_head_at TEXT,
+  dept_head_note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (

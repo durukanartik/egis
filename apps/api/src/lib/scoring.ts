@@ -70,6 +70,15 @@ export type ClassificationParameters = {
   gateCapG2: Tier;
   gateCapG3: Tier;
   categoryMinimums: Record<Category, { advanced: number; premium: number }>;
+  // Approval workflow (Section 8.2, Assumption A7) — read by the decision endpoint, not by this
+  // pure scoring function; kept here because it is effective-dated configuration like every other
+  // classification parameter.
+  approvalPolicy: {
+    singleReviewerDefault: boolean;
+    deptHeadRequiredForTiers: Tier[];
+    deptHeadRequiredOnTierChange: boolean;
+    appealDaysAlways: number;
+  };
 };
 
 export type Tier = "Below Basic" | "Basic" | "Advanced" | "Premium";
