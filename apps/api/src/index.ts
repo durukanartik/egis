@@ -8,6 +8,7 @@ import { auditRouter } from "./routes/audit.js";
 import { reportingRouter } from "./routes/reporting.js";
 import { espsRouter } from "./routes/esps.js";
 import { integrationRouter } from "./routes/integration.js";
+import { pqRouter } from "./routes/pq.js";
 
 const app = express();
 app.use(cors());
@@ -22,6 +23,7 @@ app.use("/api/audit", auditRouter);
 app.use("/api/reporting", reportingRouter);
 app.use("/api/esps", espsRouter);
 app.use("/api/integration", integrationRouter);
+app.use("/api/pq", pqRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

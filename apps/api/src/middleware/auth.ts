@@ -6,7 +6,7 @@ export const JWT_SECRET = process.env.JWT_SECRET ?? "ead-esp-mvp-dev-secret-chan
 export type AuthUser = {
   id: string;
   username: string;
-  role: "reviewer" | "admin" | "auditor";
+  role: "reviewer" | "dept_head" | "licensing" | "admin" | "auditor";
   display_name: string;
 };
 

@@ -25,6 +25,7 @@ function getEsp(espId: string): EspRow {
 type AppRow = {
   id: string;
   esp_id: string;
+  stage: string;
   g1_critical_violation: "Y" | "N" | null;
   g2_suspension_12mo: "Y" | "N" | null;
   g3_holds_hazardous_permit: "Y" | "N" | null;
@@ -334,6 +335,7 @@ applicationsRouter.post("/:id/ai-screening/run", requireRole("reviewer", "admin"
 applicationsRouter.post("/:id/score/run", requireRole("reviewer", "admin"), (req, res) => {
   const app = getApplication(req.params.id);
   if (!app) return res.status(404).json({ error: "Application not found" });
+  if (app.stage !== "classification") return res.status(409).json({ error: "Scoring applies only to classification-stage applications" });
 
   applySuspensionCascade(app.esp_id);
   const esp = getEsp(app.esp_id);
@@ -427,6 +429,7 @@ applicationsRouter.post("/:id/decision", requireRole("reviewer"), (req, res) => 
 
   const app = getApplication(req.params.id);
   if (!app) return res.status(404).json({ error: "Application not found" });
+  if (app.stage !== "classification") return res.status(409).json({ error: "Decisions apply only to classification-stage applications" });
 
   const id = nanoid();
   db.prepare(

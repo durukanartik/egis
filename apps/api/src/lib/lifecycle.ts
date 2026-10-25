@@ -17,8 +17,8 @@ export type EspRow = {
   id: string;
   legal_name: string;
   sector: string;
-  licence_status: "active" | "suspended" | "expired" | "revoked";
-  licence_expiry_date: string;
+  licence_status: "pending" | "active" | "suspended" | "expired" | "revoked";
+  licence_expiry_date: string | null;
   classification_valid_until: string | null;
   current_tier: string | null;
   previous_published_tier: string | null;
@@ -31,9 +31,12 @@ export type EspRow = {
 // still a valid authorisation — it is gate G2, not G0, that caps the tier and shows the classification
 // as Suspended while the suspension lasts (Section 8.1). Only a revoked or expired licence fails G0.
 export function licenceIsUsable(esp: EspRow): { ok: boolean; reason?: string } {
+  if (esp.licence_status === "pending") return { ok: false, reason: "No Authorisation (WML / Environmental Permit) has been issued yet — PQ is pending" };
   if (esp.licence_status === "revoked") return { ok: false, reason: "Waste Management Licence / Environmental Permit is revoked" };
   if (esp.licence_status === "expired") return { ok: false, reason: "Waste Management Licence / Environmental Permit is expired" };
-  if (new Date(esp.licence_expiry_date) < new Date()) return { ok: false, reason: "Waste Management Licence / Environmental Permit has passed its expiry date" };
+  if (esp.licence_expiry_date && new Date(esp.licence_expiry_date) < new Date()) {
+    return { ok: false, reason: "Waste Management Licence / Environmental Permit has passed its expiry date" };
+  }
   return { ok: true };
 }
 

@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('reviewer','admin','auditor')),
+  role TEXT NOT NULL CHECK (role IN ('reviewer','dept_head','licensing','admin','auditor')),
   display_name TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -30,12 +30,15 @@ CREATE TABLE IF NOT EXISTS esps (
   id TEXT PRIMARY KEY,
   legal_name TEXT NOT NULL,
   commercial_licence_number TEXT NOT NULL,
-  waste_licence_number TEXT NOT NULL,
+  -- Authorisation (Section 7.1): generalises the WML and the treatment-facility Environmental
+  -- Permit. Null until PQ passes and the Authorisation is issued (Section 8.1) — an ESP at entity
+  -- pre-registration holds no WML/Environmental Permit yet.
+  waste_licence_number TEXT,
   sector TEXT NOT NULL CHECK (sector IN ('Transportation','Trading','Treatment')),
   permitted_waste_types TEXT NOT NULL,
-  licence_status TEXT NOT NULL CHECK (licence_status IN ('active','suspended','expired','revoked')),
-  licence_issue_date TEXT NOT NULL,
-  licence_expiry_date TEXT NOT NULL,
+  licence_status TEXT NOT NULL DEFAULT 'pending' CHECK (licence_status IN ('pending','active','suspended','expired','revoked')),
+  licence_issue_date TEXT,
+  licence_expiry_date TEXT,
   last_classification_at TEXT,
   classification_valid_until TEXT,
   current_tier TEXT CHECK (current_tier IN ('Below Basic','Basic','Advanced','Premium')),
@@ -47,6 +50,11 @@ CREATE TABLE IF NOT EXISTS esps (
   last_upgrade_request_at TEXT
 );
 
+-- Prequalification (Section 9.1, Appendix 21.2) reuses the Application entity at
+-- stage='prequalification' rather than a parallel entity: PQ is assessed per ESP per activity
+-- category, at entity pre-registration, before any Authorisation is issued, and is independent of
+-- classification entirely — "the authorisation rule applies to classification only, not PQ"
+-- (Section 8.1). pq_activity_category/pq_reason/pq_* columns are populated only at that stage.
 CREATE TABLE IF NOT EXISTS applications (
   id TEXT PRIMARY KEY,
   esp_id TEXT NOT NULL REFERENCES esps(id),
@@ -59,7 +67,41 @@ CREATE TABLE IF NOT EXISTS applications (
   -- Gates G1-G3 (Parameters sheet / ESP INFORMATION & GATES block). G0 is computed from licence_status.
   g1_critical_violation TEXT CHECK (g1_critical_violation IN ('Y','N')),
   g2_suspension_12mo TEXT CHECK (g2_suspension_12mo IN ('Y','N')),
-  g3_holds_hazardous_permit TEXT CHECK (g3_holds_hazardous_permit IN ('Y','N'))
+  g3_holds_hazardous_permit TEXT CHECK (g3_holds_hazardous_permit IN ('Y','N')),
+  -- PQ fields (Appendix 21.2 sample contract) — set only for stage='prequalification'.
+  pq_activity_category TEXT,
+  pq_reason TEXT CHECK (pq_reason IN ('NEW_ENTITY','FIRST_RENEWAL','ADD_ACTIVITY_CATEGORY')),
+  pq_overall_result TEXT CHECK (pq_overall_result IN ('Eligible','Conditional','Not eligible','Manual review')),
+  pq_conditional_open_items TEXT,
+  pq_decision_note TEXT,
+  pq_decided_by TEXT,
+  pq_decided_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pq_criterion_entries (
+  id TEXT PRIMARY KEY,
+  application_id TEXT NOT NULL REFERENCES applications(id),
+  criterion_id TEXT NOT NULL,
+  outcome TEXT NOT NULL DEFAULT 'Manual review' CHECK (outcome IN ('Eligible','Conditional','Not eligible','Manual review')),
+  note TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by TEXT NOT NULL,
+  UNIQUE (application_id, criterion_id)
+);
+
+-- Licensing block (Section 7.1/8.1): raised by a block rule (configuration) or manually by EAD
+-- Licensing; an Authorisation cannot be issued while a block is active.
+CREATE TABLE IF NOT EXISTS blocks (
+  id TEXT PRIMARY KEY,
+  esp_id TEXT NOT NULL REFERENCES esps(id),
+  reason TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('rule','manual')),
+  effective_date TEXT NOT NULL DEFAULT (datetime('now')),
+  lift_date TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  lifted_by TEXT,
+  lifted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -224,6 +266,7 @@ type RawClassification = {
     }
   >;
   parameters: {
+    basicMinTotal: number;
     advancedMinTotal: number;
     premiumMinTotal: number;
     retentionBufferPoints: number;
@@ -232,6 +275,7 @@ type RawClassification = {
     gateCapG3: string;
     categoryMinimums: Record<string, { advanced: number; premium: number }>;
   };
+  pqCriteria: Record<string, Array<{ id: string; theme: string; requirement: string }>>;
 };
 
 const classificationDataPath = path.join(__dirname, "data", "classification.json");
@@ -255,6 +299,8 @@ function seed() {
     `INSERT INTO users (id, username, password_hash, role, display_name) VALUES (?, ?, ?, ?, ?)`
   );
   insertUser.run(nanoid(), "reviewer1", hash("Password123!"), "reviewer", "Fatima Al Mazrouei (Reviewer)");
+  insertUser.run(nanoid(), "depthead1", hash("Password123!"), "dept_head", "Mariam Al Hammadi (Department Head)");
+  insertUser.run(nanoid(), "licensing1", hash("Password123!"), "licensing", "Hamad Al Dhaheri (Licensing)");
   insertUser.run(nanoid(), "admin1", hash("Password123!"), "admin", "Omar Al Suwaidi (Config Editor)");
   insertUser.run(nanoid(), "admin2", hash("Password123!"), "admin", "Sara Al Nuaimi (Config Approver)");
   insertUser.run(nanoid(), "auditor1", hash("Password123!"), "auditor", "Khalid Al Zaabi (Auditor)");
@@ -458,6 +504,60 @@ function seed() {
     // ESPs with useExample=false are seeded with gates/documents only — the reviewer fills in
     // criterion measured values and evidence through the Reviewer Portal, exactly as the real
     // calculator's "How to use" instructions describe.
+  });
+
+  // ---- Seed two PQ-track ESPs (Section 9.1): entities at pre-registration, before any
+  // Authorisation is issued — no WML/Environmental Permit yet, no classification application.
+  type PqSeed = {
+    name: string;
+    sector: "Transportation" | "Trading" | "Treatment";
+    waste: string;
+    activityCategory: string;
+    reason: "NEW_ENTITY" | "FIRST_RENEWAL" | "ADD_ACTIVITY_CATEGORY";
+    outcome: "ready" | "in_progress"; // "ready": PQ decided Eligible, awaiting Licensing issuance
+  };
+  const pqEsps: PqSeed[] = [
+    {
+      name: "Barakah Logistics & Trading Co.",
+      sector: "Trading",
+      waste: "Scrap Metal",
+      activityCategory: "WASTE_TRADING",
+      reason: "NEW_ENTITY",
+      outcome: "ready",
+    },
+    {
+      name: "Mussafah Transport Solutions LLC",
+      sector: "Transportation",
+      waste: "General",
+      activityCategory: "WASTE_TRANSPORTATION",
+      reason: "NEW_ENTITY",
+      outcome: "in_progress",
+    },
+  ];
+
+  const insertPqCriterionEntry = db.prepare(
+    `INSERT INTO pq_criterion_entries (id, application_id, criterion_id, outcome, updated_by) VALUES (?, ?, ?, ?, 'system-seed')`
+  );
+
+  pqEsps.forEach((p, idx) => {
+    const espId = nanoid();
+    insertEsp.run(espId, p.name, `CN-${1100 + idx}`, null, p.sector, p.waste, "pending", null, null, null);
+
+    const appId = nanoid();
+    const pqCriteria = classificationData.pqCriteria[p.sector] ?? [];
+    if (p.outcome === "ready") {
+      db.prepare(
+        `INSERT INTO applications (id, esp_id, source, stage, status, declaration_accepted, submitted_at, tamm_reference, pq_activity_category, pq_reason, pq_overall_result, pq_decision_note, pq_decided_by, pq_decided_at)
+         VALUES (?, ?, 'TAMM_TECHNICAL_MODIFICATION', 'prequalification', 'decided', 1, ?, ?, ?, ?, 'Eligible', 'All PQ-1..PQ-10 criteria met; no open items.', 'system-seed', datetime('now'))`
+      ).run(appId, espId, addDays(now, -(5 + idx)).toISOString(), `TAMM-PQ-2026-${200000 + idx}`, p.activityCategory, p.reason);
+      pqCriteria.forEach((c) => insertPqCriterionEntry.run(nanoid(), appId, c.id, "Eligible"));
+    } else {
+      db.prepare(
+        `INSERT INTO applications (id, esp_id, source, stage, status, declaration_accepted, submitted_at, tamm_reference, pq_activity_category, pq_reason)
+         VALUES (?, ?, 'TAMM_TECHNICAL_MODIFICATION', 'prequalification', 'under_review', 1, ?, ?, ?, ?)`
+      ).run(appId, espId, addDays(now, -(2 + idx)).toISOString(), `TAMM-PQ-2026-${200000 + idx}`, p.activityCategory, p.reason);
+      pqCriteria.forEach((c, cIdx) => insertPqCriterionEntry.run(nanoid(), appId, c.id, cIdx < pqCriteria.length - 2 ? "Eligible" : "Manual review"));
+    }
   });
 
   console.log("[seed] done.");
