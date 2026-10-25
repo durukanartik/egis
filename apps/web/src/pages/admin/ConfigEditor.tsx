@@ -25,6 +25,7 @@ type Criterion = {
 type HazItem = { id: string; requirement: string; verification: string };
 
 type ClassificationParameters = {
+  basicMinTotal: number;
   advancedMinTotal: number;
   premiumMinTotal: number;
   retentionBufferPoints: number;
@@ -329,7 +330,16 @@ export default function ConfigEditor() {
       </Section>
 
       <Section title="Tier Thresholds, Retention Buffer & Gate Caps">
-        <div className="grid md:grid-cols-3 gap-4 text-sm mb-4">
+        <div className="grid md:grid-cols-4 gap-4 text-sm mb-4">
+          <Field label="Basic — minimum total score">
+            <input
+              type="number"
+              disabled={!editable}
+              value={version.classification_parameters.basicMinTotal}
+              onChange={(e) => updateParams({ basicMinTotal: Number(e.target.value) })}
+              className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50"
+            />
+          </Field>
           <Field label="Advanced — minimum total score">
             <input
               type="number"
@@ -534,7 +544,7 @@ function ThresholdInput({ value, onChange, disabled }: { value: number | null; o
 function TierSelect({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <select disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)} className="w-full border border-slate-300 rounded px-2 py-1 disabled:bg-slate-50">
-      {["Basic", "Advanced", "Premium"].map((t) => (
+      {["Below Basic", "Basic", "Advanced", "Premium"].map((t) => (
         <option key={t}>{t}</option>
       ))}
     </select>

@@ -2,6 +2,7 @@ const TIER_COLORS: Record<string, string> = {
   Premium: "bg-brand-green-50 text-brand-green-800 ring-1 ring-inset ring-brand-green-100",
   Advanced: "bg-brand-blue-50 text-brand-blue-800 ring-1 ring-inset ring-brand-blue-100",
   Basic: "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-100",
+  "Below Basic": "bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-100",
   "NOT ELIGIBLE": "bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-100",
 };
 
@@ -27,6 +28,12 @@ const STATUS_COLORS: Record<string, string> = {
   published: "bg-brand-green-50 text-brand-green-800",
   superseded: "bg-brand-grey-50 text-brand-grey-500",
   rejected: "bg-rose-50 text-rose-700",
+  // Classification status (SAD v7.1 Section 8.1/8.2) — decoupled from tier.
+  "Not classified": "bg-brand-grey-50 text-brand-grey-700",
+  Active: "bg-brand-green-50 text-brand-green-800",
+  "Under review": "bg-amber-50 text-amber-800",
+  Suspended: "bg-rose-50 text-rose-700",
+  Revoked: "bg-rose-50 text-rose-700",
 };
 
 export function StatusBadge({ status }: { status: string }) {

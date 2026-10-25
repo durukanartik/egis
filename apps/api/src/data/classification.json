@@ -2101,6 +2101,186 @@
         "advanced": 0.3,
         "premium": 0.5
       }
-    }
+    },
+    "basicMinTotal": 40,
+    "approvalPolicy": {
+      "singleReviewerDefault": true,
+      "deptHeadRequiredForTiers": [
+        "Premium",
+        "Below Basic"
+      ],
+      "deptHeadRequiredOnTierChange": true,
+      "appealDaysAlways": 30
+    },
+    "monitoringFrequency": {
+      "Premium": "Yearly",
+      "Advanced": "Not set (EAD to confirm, Decision D12)",
+      "Basic": "Not set (EAD to confirm, Decision D12)",
+      "Below Basic": "Monthly"
+    },
+    "processPeriods": {
+      "evidenceWindowDays": 30,
+      "cycleOpenMonthsBeforeRenewal": 5,
+      "assessmentWorkingDays": 70,
+      "clarificationWorkingDays": 10,
+      "siteVerificationWorkingDays": null,
+      "approvalWorkingDays": null,
+      "appealFilingDays": 30,
+      "appealDecisionWorkingDays": 30,
+      "capDays": 30,
+      "upgradeRequestMonths": 6,
+      "provisionalBasicMonths": 6
+    },
+    "consequencesEnabled": false,
+    "consequenceLadder": {
+      "cyclesBelowBasicForCAP": 1,
+      "cyclesBelowBasicForBlock": 2,
+      "blockDurationMonths": 12,
+      "cyclesAtBasicForImprovementPlan": 3
+    },
+    "suspensionAdvancedCapMonths": 12
+  },
+  "pqCriteria": {
+    "Transportation": [
+      {
+        "id": "PQ-1",
+        "theme": "Valid legal entity",
+        "requirement": "The applicant is a validly registered commercial entity with a DED licence covering the declared activity."
+      },
+      {
+        "id": "PQ-2",
+        "theme": "Regulatory clean status",
+        "requirement": "No unresolved critical regulatory findings or active disqualifications against the entity."
+      },
+      {
+        "id": "PQ-3",
+        "theme": "Declared waste profile (transport profile)",
+        "requirement": "The entity has declared the waste types and transport profile it intends to handle, consistent with its activity category."
+      },
+      {
+        "id": "PQ-4",
+        "theme": "Manifest system registration",
+        "requirement": "The entity is registered on the Bolisaty / Waste Manifest System. A declaration-only submission gives a Conditional result pending registration."
+      },
+      {
+        "id": "PQ-5",
+        "theme": "Capacity readiness",
+        "requirement": "The entity has at least one appropriate licensed vehicle for the declared activity."
+      },
+      {
+        "id": "PQ-6",
+        "theme": "Branding declaration",
+        "requirement": "The entity has declared its vehicle branding/livery complies with EAD requirements."
+      },
+      {
+        "id": "PQ-7",
+        "theme": "HSE and incident preparedness declaration",
+        "requirement": "The entity has declared basic HSE and incident-preparedness arrangements are in place."
+      },
+      {
+        "id": "PQ-8",
+        "theme": "Operational resilience and continuity declaration",
+        "requirement": "The entity has declared arrangements for operational continuity (e.g. backup vehicles or drivers)."
+      }
+    ],
+    "Trading": [
+      {
+        "id": "PQ-1",
+        "theme": "Valid legal entity",
+        "requirement": "The applicant is a validly registered commercial entity with a DED licence covering the declared activity."
+      },
+      {
+        "id": "PQ-2",
+        "theme": "Regulatory clean status",
+        "requirement": "No unresolved critical regulatory findings or active disqualifications against the entity."
+      },
+      {
+        "id": "PQ-3",
+        "theme": "Declared waste profile (trading profile)",
+        "requirement": "The entity has declared the waste types and trading profile it intends to handle."
+      },
+      {
+        "id": "PQ-4",
+        "theme": "Manifest system registration",
+        "requirement": "The entity is registered on the Bolisaty / Waste Manifest System. A declaration-only submission gives a Conditional result pending registration."
+      },
+      {
+        "id": "PQ-5",
+        "theme": "Operational site availability",
+        "requirement": "The entity has a declared operational site available for its trading activity."
+      },
+      {
+        "id": "PQ-6",
+        "theme": "Initial site screening",
+        "requirement": "An initial screening of the declared site has been completed with no disqualifying findings."
+      },
+      {
+        "id": "PQ-7",
+        "theme": "Transport arrangement declaration",
+        "requirement": "The entity has declared how waste will be transported to/from its site (own fleet or licensed subcontractor)."
+      },
+      {
+        "id": "PQ-8",
+        "theme": "HSE and incident preparedness declaration",
+        "requirement": "The entity has declared basic HSE and incident-preparedness arrangements are in place."
+      },
+      {
+        "id": "PQ-9",
+        "theme": "Operational resilience and continuity declaration",
+        "requirement": "The entity has declared arrangements for operational continuity."
+      },
+      {
+        "id": "PQ-10",
+        "theme": "Company liability insurance declaration",
+        "requirement": "The entity has declared it holds (or will hold before operating) adequate liability insurance."
+      }
+    ],
+    "Treatment": [
+      {
+        "id": "PQ-1",
+        "theme": "Valid legal entity",
+        "requirement": "The applicant is a validly registered commercial entity with a DED licence covering the declared activity."
+      },
+      {
+        "id": "PQ-2",
+        "theme": "Regulatory clean status",
+        "requirement": "No unresolved critical regulatory findings or active disqualifications against the entity."
+      },
+      {
+        "id": "PQ-3",
+        "theme": "Declared waste profile (treatment & recycling profile)",
+        "requirement": "The entity has declared the waste types and treatment/recycling processes it intends to operate."
+      },
+      {
+        "id": "PQ-4",
+        "theme": "Manifest system registration",
+        "requirement": "The entity is registered on the Bolisaty / Waste Manifest System. A declaration-only submission gives a Conditional result pending registration."
+      },
+      {
+        "id": "PQ-5",
+        "theme": "EAD Environmental NOC where required",
+        "requirement": "The entity holds an EAD Environmental No-Objection Certificate where the declared process requires one."
+      },
+      {
+        "id": "PQ-6",
+        "theme": "Transport arrangement declaration",
+        "requirement": "The entity has declared how waste will be transported to/from its facility (own fleet or licensed subcontractor)."
+      },
+      {
+        "id": "PQ-7",
+        "theme": "HSE and incident preparedness declaration",
+        "requirement": "The entity has declared basic HSE and incident-preparedness arrangements are in place."
+      },
+      {
+        "id": "PQ-8",
+        "theme": "Operational resilience and continuity declaration",
+        "requirement": "The entity has declared arrangements for operational continuity."
+      },
+      {
+        "id": "PQ-9",
+        "theme": "Company liability insurance declaration",
+        "requirement": "The entity has declared it holds (or will hold before operating) adequate liability insurance."
+      }
+    ]
   }
 }

@@ -38,8 +38,12 @@ CREATE TABLE IF NOT EXISTS esps (
   licence_expiry_date TEXT NOT NULL,
   last_classification_at TEXT,
   classification_valid_until TEXT,
-  current_tier TEXT CHECK (current_tier IN ('Basic','Advanced','Premium')),
-  previous_published_tier TEXT CHECK (previous_published_tier IN ('Basic','Advanced','Premium')),
+  current_tier TEXT CHECK (current_tier IN ('Below Basic','Basic','Advanced','Premium')),
+  previous_published_tier TEXT CHECK (previous_published_tier IN ('Below Basic','Basic','Advanced','Premium')),
+  -- Decoupled from current_tier per SAD v7.1 Section 8.1/8.2: a Suspended or Under review ESP still
+  -- carries an underlying computed tier, it just isn't the published status.
+  classification_status TEXT NOT NULL DEFAULT 'Not classified'
+    CHECK (classification_status IN ('Not classified','Active','Under review','Suspended','Revoked')),
   last_upgrade_request_at TEXT
 );
 
@@ -136,7 +140,8 @@ CREATE TABLE IF NOT EXISTS score_runs (
   config_version_id TEXT NOT NULL REFERENCES config_versions(id),
   result_json TEXT NOT NULL,
   total_score REAL NOT NULL,
-  final_classification TEXT NOT NULL,
+  final_classification TEXT,
+  final_status TEXT NOT NULL,
   context_snapshot_json TEXT NOT NULL,
   executed_at TEXT NOT NULL DEFAULT (datetime('now')),
   executed_by TEXT NOT NULL,
@@ -267,7 +272,9 @@ function seed() {
     licence_status_gating: true,
     suspension_cascade: true,
     classification_validity_months: 12,
-    upgrade_cycle_months: 6,
+    // Annual reassessment (SAD v7.1 Section 8.1): a serious incident during the year shows
+    // Under review, with any downgrade applied only at the next annual cycle.
+    upgrade_cycle_months: 12,
     review_window_days: 30,
     gps_scope: "equipped_active_status_only",
   };
@@ -302,7 +309,7 @@ function seed() {
     licenceStatus: "active" | "suspended" | "expired" | "revoked";
     useExample: boolean; // pre-fill every criterion entry from the calculator's own illustrative example
     gates: { g1: "Y" | "N"; g2: "Y" | "N"; g3: "Y" | "N" };
-    previousPublishedTier: "Basic" | "Advanced" | "Premium" | null;
+    previousPublishedTier: "Below Basic" | "Basic" | "Advanced" | "Premium" | null;
   };
 
   const esps: EspSeed[] = [

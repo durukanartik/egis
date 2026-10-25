@@ -10,6 +10,7 @@ type AppRow = {
   status: string;
   licence_status: string;
   current_tier: string | null;
+  classification_status: string;
   submitted_at: string;
   tamm_reference: string;
 };
@@ -61,6 +62,7 @@ export default function Queue() {
               <th className="text-left px-4 py-2">TAMM Reference</th>
               <th className="text-left px-4 py-2">Licence</th>
               <th className="text-left px-4 py-2">Status</th>
+              <th className="text-left px-4 py-2">Classification</th>
               <th className="text-left px-4 py-2">Current Tier</th>
               <th className="text-left px-4 py-2">Submitted</th>
             </tr>
@@ -68,14 +70,14 @@ export default function Queue() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
                   Loading…
                 </td>
               </tr>
             )}
             {!loading && apps.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
                   No applications in this filter.
                 </td>
               </tr>
@@ -94,6 +96,9 @@ export default function Queue() {
                 </td>
                 <td className="px-4 py-2">
                   <StatusBadge status={a.status} />
+                </td>
+                <td className="px-4 py-2">
+                  <StatusBadge status={a.classification_status} />
                 </td>
                 <td className="px-4 py-2">
                   <TierBadge tier={a.current_tier} />

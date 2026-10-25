@@ -75,7 +75,10 @@ function getGates(app: AppRow, esp: EspRow): Gates {
   return {
     g0: licence.ok ? "Y" : "N",
     g1: app.g1_critical_violation ?? "N",
-    g2: app.g2_suspension_12mo ?? "N",
+    // Gate G2 (Section 8.2): a suspension within the last 12 months caps the tier at Advanced;
+    // whether the suspension is happening right now (vs. already lifted) decides Suspended status.
+    g2CurrentlySuspended: esp.licence_status === "suspended" ? "Y" : "N",
+    g2CapActive: app.g2_suspension_12mo ?? "N",
     g3: app.g3_holds_hazardous_permit ?? "N",
   };
 }
@@ -84,7 +87,7 @@ applicationsRouter.get("/", (req, res) => {
   const status = typeof req.query.status === "string" ? req.query.status : undefined;
   const rows = db
     .prepare(
-      `SELECT a.*, e.legal_name, e.sector, e.licence_status, e.current_tier
+      `SELECT a.*, e.legal_name, e.sector, e.licence_status, e.current_tier, e.classification_status
        FROM applications a JOIN esps e ON e.id = a.esp_id
        ${status ? "WHERE a.status = ?" : ""}
        ORDER BY a.submitted_at DESC`
@@ -356,15 +359,16 @@ applicationsRouter.post("/:id/score/run", requireRole("reviewer", "admin"), (req
 
   const id = nanoid();
   db.prepare(
-    `INSERT INTO score_runs (id, application_id, config_version_id, result_json, total_score, final_classification, context_snapshot_json, executed_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO score_runs (id, application_id, config_version_id, result_json, total_score, final_classification, final_status, context_snapshot_json, executed_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     req.params.id,
     config.id,
     JSON.stringify(result),
     result.total,
-    result.finalClassification,
+    result.finalTier,
+    result.status,
     JSON.stringify({ gates, previousPublishedTier, hazardousModuleResult }),
     req.user!.username
   );
@@ -378,7 +382,7 @@ applicationsRouter.post("/:id/score/run", requireRole("reviewer", "admin"), (req
     action: "score.run",
     entityType: "application",
     entityId: req.params.id,
-    after: { score_run_id: id, config_version: config.version_number, total: result.total, final_classification: result.finalClassification },
+    after: { score_run_id: id, config_version: config.version_number, total: result.total, final_tier: result.finalTier, status: result.status },
   });
 
   res.json({ id, config_version: config.version_number, ...result });
@@ -386,8 +390,8 @@ applicationsRouter.post("/:id/score/run", requireRole("reviewer", "admin"), (req
 
 applicationsRouter.post("/:id/score/:scoreRunId/override", requireRole("reviewer"), (req, res) => {
   const { tier, justification } = req.body ?? {};
-  if (!["Basic", "Advanced", "Premium"].includes(tier)) {
-    return res.status(400).json({ error: "tier must be one of Basic, Advanced, Premium" });
+  if (!["Below Basic", "Basic", "Advanced", "Premium"].includes(tier)) {
+    return res.status(400).json({ error: "tier must be one of Below Basic, Basic, Advanced, Premium" });
   }
   if (typeof justification !== "string" || justification.trim().length < 10) {
     return res.status(400).json({ error: "A written justification (10+ characters) is required to override a score" });
@@ -417,8 +421,8 @@ applicationsRouter.post("/:id/score/:scoreRunId/override", requireRole("reviewer
 applicationsRouter.post("/:id/decision", requireRole("reviewer"), (req, res) => {
   const { decision, tier, note } = req.body ?? {};
   if (!["approved", "rejected"].includes(decision)) return res.status(400).json({ error: "decision must be 'approved' or 'rejected'" });
-  if (decision === "approved" && tier && !["Basic", "Advanced", "Premium"].includes(tier)) {
-    return res.status(400).json({ error: "tier must be one of Basic, Advanced, Premium" });
+  if (decision === "approved" && tier && !["Below Basic", "Basic", "Advanced", "Premium"].includes(tier)) {
+    return res.status(400).json({ error: "tier must be one of Below Basic, Basic, Advanced, Premium" });
   }
 
   const app = getApplication(req.params.id);
@@ -436,9 +440,11 @@ applicationsRouter.post("/:id/decision", requireRole("reviewer"), (req, res) => 
     const validityMonths = config?.lifecycleRules.classification_validity_months ?? 12;
     const validUntil = new Date();
     validUntil.setMonth(validUntil.getMonth() + validityMonths);
+    const esp = getEsp(app.esp_id);
+    const status = esp.licence_status === "suspended" ? "Suspended" : "Active";
     db.prepare(
-      `UPDATE esps SET current_tier = ?, previous_published_tier = ?, last_classification_at = datetime('now'), classification_valid_until = ? WHERE id = ?`
-    ).run(tier, tier, validUntil.toISOString().slice(0, 10), app.esp_id);
+      `UPDATE esps SET current_tier = ?, previous_published_tier = ?, classification_status = ?, last_classification_at = datetime('now'), classification_valid_until = ? WHERE id = ?`
+    ).run(tier, tier, status, validUntil.toISOString().slice(0, 10), app.esp_id);
   }
 
   recordAudit({

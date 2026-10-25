@@ -13,6 +13,9 @@ reportingRouter.get("/dashboard", (req, res) => {
   const byTier = db
     .prepare("SELECT current_tier as tier, COUNT(*) as count FROM esps WHERE current_tier IS NOT NULL GROUP BY current_tier")
     .all();
+  const byClassificationStatus = db
+    .prepare("SELECT classification_status as status, COUNT(*) as count FROM esps GROUP BY classification_status")
+    .all();
   const bySector = db.prepare("SELECT sector, COUNT(*) as count FROM esps GROUP BY sector").all();
   const licenceStatus = db.prepare("SELECT licence_status, COUNT(*) as count FROM esps GROUP BY licence_status").all();
   const totals = db.prepare("SELECT (SELECT COUNT(*) FROM esps) as total_esps, (SELECT COUNT(*) FROM applications) as total_applications").get();
@@ -24,6 +27,7 @@ reportingRouter.get("/dashboard", (req, res) => {
     totals,
     by_status: byStatus,
     by_tier: byTier,
+    by_classification_status: byClassificationStatus,
     by_sector: bySector,
     by_licence_status: licenceStatus,
     score_runs_completed: scoreRunsCompleted.c,

@@ -40,8 +40,9 @@ type Detail = {
     current_tier: string | null;
     previous_published_tier: string | null;
     classification_valid_until: string | null;
+    classification_status: string;
   };
-  gates: { g0: "Y" | "N"; g1: "Y" | "N"; g2: "Y" | "N"; g3: "Y" | "N" };
+  gates: { g0: "Y" | "N"; g1: "Y" | "N"; g2CurrentlySuspended: "Y" | "N"; g2CapActive: "Y" | "N"; g3: "Y" | "N" };
   documents: { id: string; doc_type: string; file_name: string; expiry_date: string | null; status: string }[];
   criteria: Criterion[];
   hazardous_module: HazItem[];
@@ -50,7 +51,8 @@ type Detail = {
   score_runs: {
     id: string;
     total_score: number;
-    final_classification: string;
+    final_classification: string | null;
+    final_status: string;
     executed_at: string;
     executed_by: string;
     overridden: number;
@@ -58,11 +60,12 @@ type Detail = {
     override_justification: string | null;
     result: {
       total: number;
-      finalClassification: string;
+      finalTier: string | null;
+      status: string;
+      reason: string;
       scoreBasedTier: string;
       tierWithRetention: string;
       gateCapTier: string;
-      reason: string;
       retained: boolean;
       hazardousModuleResult: string;
       advancedMinimumsAllMet: boolean;
@@ -143,6 +146,7 @@ export default function ApplicationDetail() {
         <div className="flex gap-2 items-center">
           <StatusBadge status={esp.licence_status} />
           <StatusBadge status={application.status} />
+          <StatusBadge status={esp.classification_status} />
           <TierBadge tier={esp.current_tier} />
         </div>
       </div>
@@ -158,9 +162,15 @@ export default function ApplicationDetail() {
             value={gates.g1}
             onSave={(v) => runAction("g1", () => api(`/applications/${application.id}/gates`, { method: "PUT", body: JSON.stringify({ g1: v }) }))}
           />
+          <GateRow
+            label="G2 — Currently suspended"
+            value={gates.g2CurrentlySuspended}
+            readOnly
+            derivedNote="derived from licence status — caps the tier at Advanced while it lasts and shows the classification as Suspended"
+          />
           <GateEditRow
             label="G2 — Permit/account suspension in last 12 months"
-            value={gates.g2}
+            value={gates.g2CapActive}
             onSave={(v) => runAction("g2", () => api(`/applications/${application.id}/gates`, { method: "PUT", body: JSON.stringify({ g2: v }) }))}
           />
           <GateEditRow
@@ -285,11 +295,12 @@ export default function ApplicationDetail() {
         {latestScore && (
           <div>
             <div className="flex items-center gap-3 mb-1">
-              <TierBadge tier={latestScore.overridden ? latestScore.override_tier : latestScore.result.finalClassification} />
+              <TierBadge tier={latestScore.overridden ? latestScore.override_tier : latestScore.result.finalTier} />
+              {!latestScore.overridden && <StatusBadge status={latestScore.result.status} />}
               <span className="text-sm text-slate-600">total {latestScore.result.total} / 100</span>
               {latestScore.overridden ? (
                 <span className="text-xs text-amber-700">
-                  Overridden from {latestScore.result.finalClassification} — {latestScore.override_justification}
+                  Overridden from {latestScore.result.finalTier ?? "Not classified"} — {latestScore.override_justification}
                 </span>
               ) : null}
             </div>
@@ -336,7 +347,7 @@ export default function ApplicationDetail() {
 
       {/* Upgrade eligibility */}
       {upgrade_eligibility && (
-        <Section title="Classification Upgrade Cycle" subtitle="Systematic 6-month cycle; ad-hoc re-evaluation requests cannot be accommodated.">
+        <Section title="Classification Upgrade Cycle" subtitle="Systematic annual reassessment cycle; ad-hoc re-evaluation requests cannot be accommodated.">
           <p className={`text-sm ${upgrade_eligibility.eligible ? "text-emerald-700" : "text-amber-700"}`}>
             {upgrade_eligibility.eligible ? "Eligible to request re-evaluation now." : upgrade_eligibility.reason}
           </p>
@@ -371,7 +382,7 @@ export default function ApplicationDetail() {
         {(!latestDecision || latestDecision.decision !== "approved") && (
           <DecisionForm
             appId={application.id}
-            suggestedTier={latestScore ? (latestScore.overridden ? latestScore.override_tier! : latestScore.result.finalClassification) : undefined}
+            suggestedTier={latestScore ? (latestScore.overridden ? latestScore.override_tier! : latestScore.result.finalTier ?? undefined) : undefined}
             onSaved={load}
           />
         )}
@@ -625,7 +636,7 @@ function OverrideForm({ appId, scoreRunId, onSaved }: { appId: string; scoreRunI
       <div className="flex items-center gap-2">
         <label className="text-xs font-medium">New tier</label>
         <select value={tier} onChange={(e) => setTier(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-xs">
-          {["Basic", "Advanced", "Premium"].map((t) => (
+          {["Below Basic", "Basic", "Advanced", "Premium"].map((t) => (
             <option key={t}>{t}</option>
           ))}
         </select>
@@ -652,7 +663,7 @@ function OverrideForm({ appId, scoreRunId, onSaved }: { appId: string; scoreRunI
 
 function DecisionForm({ appId, suggestedTier, onSaved }: { appId: string; suggestedTier?: string; onSaved: () => void }) {
   const [decision, setDecision] = useState<"approved" | "rejected">("approved");
-  const [tier, setTier] = useState(suggestedTier && suggestedTier !== "NOT ELIGIBLE" ? suggestedTier : "Basic");
+  const [tier, setTier] = useState(suggestedTier ?? "Basic");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -682,7 +693,7 @@ function DecisionForm({ appId, suggestedTier, onSaved }: { appId: string; sugges
         </select>
         {decision === "approved" && (
           <select value={tier} onChange={(e) => setTier(e.target.value)} className="border border-slate-300 rounded px-2 py-1 text-sm">
-            {["Basic", "Advanced", "Premium"].map((t) => (
+            {["Below Basic", "Basic", "Advanced", "Premium"].map((t) => (
               <option key={t}>{t}</option>
             ))}
           </select>

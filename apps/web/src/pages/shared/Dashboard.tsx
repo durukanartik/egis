@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, LabelList } from "recharts";
 import { api } from "../../api/client";
-import { CATEGORICAL, LICENCE_STATUS_COLOR, TIER_ORDINAL, CHART_INK } from "../../lib/chartColors";
+import { CATEGORICAL, LICENCE_STATUS_COLOR, TIER_ORDINAL, CLASSIFICATION_STATUS_COLOR, CHART_INK } from "../../lib/chartColors";
 
 type DashboardData = {
   totals: { total_esps: number; total_applications: number };
   by_status: { status: string; count: number }[];
   by_tier: { tier: string; count: number }[];
+  by_classification_status: { status: string; count: number }[];
   by_sector: { sector: string; count: number }[];
   by_licence_status: { licence_status: string; count: number }[];
   score_runs_completed: number;
@@ -15,7 +16,8 @@ type DashboardData = {
 };
 
 const STATUS_ORDER = ["submitted", "under_review", "eligibility_failed", "scoring", "decided", "voided"];
-const TIER_ORDER = ["Basic", "Advanced", "Premium"];
+const TIER_ORDER = ["Below Basic", "Basic", "Advanced", "Premium"];
+const CLASSIFICATION_STATUS_ORDER = ["Not classified", "Active", "Under review", "Suspended", "Revoked"];
 const SECTOR_ORDER = ["Transportation", "Trading", "Treatment"];
 const LICENCE_ORDER = ["active", "expired", "suspended", "revoked"];
 
@@ -46,6 +48,11 @@ export default function Dashboard() {
     label: r.tier,
     value: r.count,
     color: TIER_ORDINAL[r.tier] ?? CATEGORICAL[0],
+  }));
+  const classificationStatusRows = orderAndFill(data.by_classification_status, CLASSIFICATION_STATUS_ORDER, "status").map((r) => ({
+    label: r.status,
+    value: r.count,
+    color: CLASSIFICATION_STATUS_COLOR[r.status] ?? CATEGORICAL[0],
   }));
   const sectorRows = orderAndFill(data.by_sector, SECTOR_ORDER, "sector").map((r, i) => ({
     label: r.sector,
@@ -81,9 +88,10 @@ export default function Dashboard() {
 
       <div className="grid lg:grid-cols-2 gap-5">
         <ChartCard title="Applications by status" subtitle="Where every submission currently sits in the review pipeline." rows={statusRows} />
-        <ChartCard title="ESPs by current tier" subtitle="Published classification outcomes, Basic → Premium." rows={tierRows} />
+        <ChartCard title="ESPs by current tier" subtitle="Published classification outcomes, Below Basic → Premium." rows={tierRows} />
+        <ChartCard title="ESPs by classification status" subtitle="Status is decoupled from tier (Section 8.1) — a Suspended ESP still has an underlying tier." rows={classificationStatusRows} />
         <ChartCard title="ESPs by sector" subtitle="Registered Environmental Service Providers per matrix." rows={sectorRows} />
-        <ChartCard title="ESPs by licence status" subtitle="Underlying Waste Management Licence status (gate G0)." rows={licenceRows} />
+        <ChartCard title="ESPs by licence status" subtitle="Underlying Waste Management Licence / Environmental Permit status (gate G0)." rows={licenceRows} />
       </div>
     </div>
   );

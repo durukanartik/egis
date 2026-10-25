@@ -169,7 +169,8 @@ configRouter.post("/versions/:id/simulate", requireRole("admin"), (req, res) => 
     const gates: Gates = {
       g0: licenceIsUsable(esp).ok ? "Y" : "N",
       g1: "N",
-      g2: "N",
+      g2CurrentlySuspended: esp.licence_status === "suspended" ? "Y" : "N",
+      g2CapActive: "N",
       g3: "N",
     };
     const previousTier: Tier | "None" = (esp.previous_published_tier as Tier | null) ?? "None";
@@ -185,16 +186,16 @@ configRouter.post("/versions/:id/simulate", requireRole("admin"), (req, res) => 
       const publishedHazItems = publishedHaz[esp.sector] ?? [];
       const publishedHazResult = evaluateHazardousModule(gates, publishedHazItems, new Map());
       const publishedResult = runClassification(publishedSectorCriteria, entries, publishedParams, gates, previousTier, publishedHazResult);
-      publishedSummary = { total: publishedResult.total, tier: publishedResult.finalClassification };
+      publishedSummary = { total: publishedResult.total, tier: publishedResult.finalTier ?? "Not classified" };
     }
 
     return {
       esp_id: esp.id,
       esp_name: esp.legal_name,
       sector: esp.sector,
-      candidate: { total: candidateResult.total, tier: candidateResult.finalClassification },
+      candidate: { total: candidateResult.total, tier: candidateResult.finalTier ?? "Not classified" },
       published: publishedSummary,
-      tier_changed: publishedSummary ? publishedSummary.tier !== candidateResult.finalClassification : null,
+      tier_changed: publishedSummary ? publishedSummary.tier !== (candidateResult.finalTier ?? "Not classified") : null,
     };
   });
 

@@ -24,10 +24,11 @@ export const STATUS = {
   critical: "#d03b3b",
 };
 
-// Ordinal ramp (one hue, monotone lightness) for classification tier — Basic -> Advanced ->
-// Premium is a meaningful order, so it takes a single-hue ramp (EAD Environment Green) rather
-// than unrelated categorical hues. Light end still clears 2:1 contrast.
+// Ordinal ramp (one hue, monotone lightness) for classification tier — Below Basic -> Basic ->
+// Advanced -> Premium is a meaningful order, so it takes a single-hue ramp (EAD Environment
+// Green) rather than unrelated categorical hues. Light end still clears 2:1 contrast.
 export const TIER_ORDINAL: Record<string, string> = {
+  "Below Basic": "#d9ecdf",
   Basic: "#9ecbb3",
   Advanced: "#2f9d6e",
   Premium: "#00613c",
@@ -38,6 +39,15 @@ export const LICENCE_STATUS_COLOR: Record<string, string> = {
   expired: STATUS.warning,
   suspended: STATUS.critical,
   revoked: STATUS.serious,
+};
+
+// Classification status (SAD v7.1 Section 8.1/8.2) — decoupled from tier.
+export const CLASSIFICATION_STATUS_COLOR: Record<string, string> = {
+  "Not classified": "#898781",
+  Active: STATUS.good,
+  "Under review": STATUS.warning,
+  Suspended: STATUS.critical,
+  Revoked: STATUS.serious,
 };
 
 export const CHART_INK = {
