@@ -1,0 +1,22 @@
+services:
+  api:
+    build: ./apps/api
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
+    volumes:
+      - api-data:/app/data
+    restart: unless-stopped
+
+  web:
+    build: ./apps/web
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  api-data:
